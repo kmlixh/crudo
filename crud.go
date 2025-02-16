@@ -105,14 +105,14 @@ type ConditionParam struct {
 	Values []any         `json:"values"`
 }
 
-func NewCrud(table string, db *gom.DB) (*Crud, error) {
+func NewCrud(prefix string, table string, db *gom.DB) (*Crud, error) {
 	tableInfo, err := db.GetTableInfo(table)
 	columnMap := TableInfoToColumnMap(tableInfo)
 	if err != nil {
 		return nil, err
 	}
 	return &Crud{HandlerMap: map[string]RequestHandler{
-		PathInsert: {
+		prefix + "/" + PathInsert: {
 			Method:             "POST",
 			PreHandler:         nil,
 			ParseRequestFunc:   RequestToMap,
@@ -120,7 +120,7 @@ func NewCrud(table string, db *gom.DB) (*Crud, error) {
 			TransferResultFunc: DoNothingTransferResultFunc,
 			RenderResponseFunc: RenderJsonResponse,
 		},
-		PathUpdate: {
+		prefix + "/" + PathUpdate: {
 			Method:             "POST",
 			PreHandler:         nil,
 			ParseRequestFunc:   RequestToMap,
@@ -128,7 +128,7 @@ func NewCrud(table string, db *gom.DB) (*Crud, error) {
 			TransferResultFunc: DoNothingTransferResultFunc,
 			RenderResponseFunc: RenderJsonResponse,
 		},
-		PathDelete: {
+		prefix + "/" + PathDelete: {
 			Method:             "GET",
 			PreHandler:         nil,
 			ParseRequestFunc:   RequestToQueryParams(tableInfo.TableName, columnMap),
@@ -136,7 +136,7 @@ func NewCrud(table string, db *gom.DB) (*Crud, error) {
 			TransferResultFunc: DoNothingTransferResultFunc,
 			RenderResponseFunc: RenderJsonResponse,
 		},
-		PathGet: {
+		prefix + "/" + PathGet: {
 			Method:             "GET",
 			PreHandler:         nil,
 			ParseRequestFunc:   RequestToQueryParams(tableInfo.TableName, columnMap),
@@ -144,7 +144,7 @@ func NewCrud(table string, db *gom.DB) (*Crud, error) {
 			TransferResultFunc: DoNothingTransferResultFunc,
 			RenderResponseFunc: RenderJsonResponse,
 		},
-		PathList: {
+		prefix + "/" + PathList: {
 			Method:             "GET",
 			PreHandler:         nil,
 			ParseRequestFunc:   RequestToQueryParams(tableInfo.TableName, columnMap),

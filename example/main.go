@@ -16,7 +16,7 @@ func main() {
 	}
 
 	r := gin.Default()
-	crud, err := crudo.NewCrud("users", db)
+	crud, err := crudo.NewCrud("users", "users", db)
 	if err != nil {
 		panic(err)
 	}
