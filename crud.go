@@ -1,5 +1,6 @@
 package crudo
 
+import "C"
 import (
 	"errors"
 	"fmt"
@@ -76,7 +77,55 @@ type ICrud interface {
 	RegisterRoutes(r *gin.RouterGroup)
 }
 type Crud struct {
-	HandlerMap map[string]*RequestHandler
+	Prefix        string
+	Table         string
+	Db            *gom.DB
+	TransferMap   map[string]string
+	FieldOfList   []string
+	FieldOfDetail []string
+	HandlerMap    map[string]*RequestHandler
+}
+
+func (c *Crud) InitDefaultHandler() {
+	tableInfo, er := c.Db.GetTableInfo(c.Table)
+	if er != nil {
+		panic(er)
+	}
+	columnMap := TableInfoToColumnMap(tableInfo)
+	c.HandlerMap = map[string]*RequestHandler{
+		c.Prefix + "/" + PathSave: {
+			Method:             "POST",
+			PreHandler:         nil,
+			ParseRequestFunc:   RequestToMapAndTransfer(c.TransferMap, false),
+			DataOperationFunc:  SaveFunc(c.Db, c.Table),
+			TransferResultFunc: DoNothingTransferResultFunc,
+			RenderResponseFunc: RenderJson,
+		},
+		c.Prefix + "/" + PathDelete: {
+			Method:             "GET",
+			PreHandler:         nil,
+			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, columnMap),
+			DataOperationFunc:  QueryDeleteFunc(c.Db, c.Table),
+			TransferResultFunc: DoNothingTransferResultFunc,
+			RenderResponseFunc: RenderJson,
+		},
+		c.Prefix + "/" + PathGet: {
+			Method:             "GET",
+			PreHandler:         nil,
+			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, columnMap),
+			DataOperationFunc:  QueryGetFunc(c.Db, c.FieldOfDetail, c.TransferMap),
+			TransferResultFunc: DoNothingTransferResultFunc,
+			RenderResponseFunc: RenderJson,
+		},
+		c.Prefix + "/" + PathList: {
+			Method:             "GET",
+			PreHandler:         nil,
+			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, columnMap),
+			DataOperationFunc:  QueryListFunc(c.Db, c.FieldOfDetail, c.TransferMap),
+			TransferResultFunc: DoNothingTransferResultFunc,
+			RenderResponseFunc: RenderJson,
+		},
+	}
 }
 
 func (c *Crud) AddHandler(path string, h *RequestHandler) {
@@ -111,49 +160,28 @@ type ConditionParam struct {
 	Values any           `json:"values"`
 }
 
+func NewCrudOfStruct(prefix string, db *gom.DB, i any) (*Crud, error) {
+	tableStruct, er := db.GetTableStruct2(i)
+	if er != nil {
+		return nil, er
+	}
+	return NewCrud2(prefix, tableStruct.TableName, db, tableStruct.FieldToColMap, nil, nil)
+}
+
 func NewCrud(prefix string, table string, db *gom.DB) (*Crud, error) {
 	return NewCrud2(prefix, table, db, nil, nil, nil)
 }
 func NewCrud2(prefix string, table string, db *gom.DB, transferMap map[string]string, queryListCols []string, queryDetailCols []string) (*Crud, error) {
-	tableInfo, err := db.GetTableInfo(table)
-	columnMap := TableInfoToColumnMap(tableInfo)
-	if err != nil {
-		return nil, err
+	crud := &Crud{
+		Prefix:        prefix,
+		Db:            db,
+		Table:         table,
+		TransferMap:   transferMap,
+		FieldOfList:   queryListCols,
+		FieldOfDetail: queryDetailCols,
 	}
-	return &Crud{HandlerMap: map[string]*RequestHandler{
-		prefix + "/" + PathSave: {
-			Method:             "POST",
-			PreHandler:         nil,
-			ParseRequestFunc:   RequestToMapAndTransfer(transferMap, false),
-			DataOperationFunc:  QuerySaveFunc(db, table, tableInfo.PrimaryKeys),
-			TransferResultFunc: DoNothingTransferResultFunc,
-			RenderResponseFunc: RenderJson,
-		},
-		prefix + "/" + PathDelete: {
-			Method:             "GET",
-			PreHandler:         nil,
-			ParseRequestFunc:   RequestToQueryParamsTransfer(table, transferMap, columnMap),
-			DataOperationFunc:  QueryDeleteFunc(db, table),
-			TransferResultFunc: DoNothingTransferResultFunc,
-			RenderResponseFunc: RenderJson,
-		},
-		prefix + "/" + PathGet: {
-			Method:             "GET",
-			PreHandler:         nil,
-			ParseRequestFunc:   RequestToQueryParamsTransfer(table, transferMap, columnMap),
-			DataOperationFunc:  QueryGetFunc(db, queryDetailCols, transferMap),
-			TransferResultFunc: DoNothingTransferResultFunc,
-			RenderResponseFunc: RenderJson,
-		},
-		prefix + "/" + PathList: {
-			Method:             "GET",
-			PreHandler:         nil,
-			ParseRequestFunc:   RequestToQueryParamsTransfer(table, transferMap, columnMap),
-			DataOperationFunc:  QueryListFunc(db, queryListCols, transferMap),
-			TransferResultFunc: DoNothingTransferResultFunc,
-			RenderResponseFunc: RenderJson,
-		},
-	}}, nil
+	crud.InitDefaultHandler()
+	return crud, nil
 }
 
 func RequestToMapAndTransfer(transferMap map[string]string, reverse bool) func(c *gin.Context) (any, error) {
@@ -452,12 +480,16 @@ func QueryGetFunc(db *gom.DB, queryCols []string, transferMap map[string]string)
 		return nil, fmt.Errorf("invalid input data type")
 	}
 }
-func QuerySaveFunc(db *gom.DB, table string, primaryKeys []string) DataOperationFunc {
+func SaveFunc(db *gom.DB, table string) DataOperationFunc {
 	return func(i any) (any, error) {
+		tableInfo, er := db.GetTableInfo(table)
+		if er != nil {
+			return nil, er
+		}
 		if mapData, ok := i.(map[string]any); ok {
 			hasPrimaryKey := false
 			currentPrimaryKeys := make([]string, 0)
-			for _, key := range primaryKeys {
+			for _, key := range tableInfo.PrimaryKeys {
 				if _, ok := mapData[key]; ok {
 					hasPrimaryKey = true
 					currentPrimaryKeys = append(currentPrimaryKeys, key)
