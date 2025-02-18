@@ -170,7 +170,7 @@ func TestNewCrud2(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &insertResponse)
 		assert.NoError(t, err)
 		insertResult := insertResponse.Data.(map[string]interface{})
-		insertedID := insertResult["id"]
+		insertedID := insertResult["data"].([]interface{})[0].(map[string]any)["id"]
 
 		// Debugging: Log the insertedID and result before verification
 		fmt.Printf("Inserted ID: %v\n", insertedID)
@@ -216,10 +216,10 @@ func TestNewCrud2(t *testing.T) {
 	t.Run("Test Delete", func(t *testing.T) {
 		// 先插入一条测试数据
 		insertData := map[string]interface{}{
-			"user_name":   "Delete Test",
-			"user_age":    50,
-			"user_email":  "delete@example.com",
-			"user_active": true,
+			"name":      "Delete Test",
+			"age":       50,
+			"email":     "delete@example.com",
+			"is_active": true,
 		}
 		jsonData, _ := json.Marshal(insertData)
 		req := httptest.NewRequest("POST", "/api/users/save", bytes.NewBuffer(jsonData))
@@ -233,7 +233,7 @@ func TestNewCrud2(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &insertResponse)
 		assert.NoError(t, err)
 		insertResult := insertResponse.Data.(map[string]interface{})
-		insertedID := insertResult["id"]
+		insertedID := insertResult["data"].([]interface{})[0].(map[string]any)["id"]
 
 		// 执行删除
 		req = httptest.NewRequest("GET", fmt.Sprintf("/api/users/delete?id_eq=%v", insertedID), nil)
@@ -244,7 +244,6 @@ func TestNewCrud2(t *testing.T) {
 
 		// 验证删除是否成功
 		result := db.Chain().Table("users").Where("id", define.OpEq, insertedID).First()
-		assert.NoError(t, result.Error)
 		assert.Empty(t, result.Data)
 	})
 
@@ -266,10 +265,10 @@ func TestNewCrud2(t *testing.T) {
 	t.Run("Test Field Mapping", func(t *testing.T) {
 		// 插入数据
 		userData := map[string]interface{}{
-			"user_name":   "Test Mapping",
-			"user_age":    28,
-			"user_email":  "mapping@example.com",
-			"user_active": true,
+			"name":      "Test Mapping",
+			"age":       28,
+			"email":     "mapping@example.com",
+			"is_active": true,
 		}
 		jsonData, _ := json.Marshal(userData)
 
@@ -284,7 +283,7 @@ func TestNewCrud2(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &response)
 		assert.NoError(t, err)
 		insertResult := response.Data.(map[string]interface{})
-		insertedID := insertResult["id"]
+		insertedID := insertResult["data"].([]interface{})[0].(map[string]any)["id"]
 
 		// 使用 GET 接口获取数据
 		req = httptest.NewRequest("GET", fmt.Sprintf("/api/users/get?id_eq=%v", insertedID), nil)

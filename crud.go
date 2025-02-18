@@ -132,7 +132,7 @@ func NewCrud2(prefix string, table string, db *gom.DB, transferMap map[string]st
 		prefix + "/" + PathDelete: {
 			Method:             "GET",
 			PreHandler:         nil,
-			ParseRequestFunc:   RequestToQueryParams(table, columnMap),
+			ParseRequestFunc:   RequestToQueryParamsTransfer(table, transferMap, columnMap),
 			DataOperationFunc:  QueryDeleteFunc(db, table),
 			TransferResultFunc: DoNothingTransferResultFunc,
 			RenderResponseFunc: RenderJson,
@@ -140,7 +140,7 @@ func NewCrud2(prefix string, table string, db *gom.DB, transferMap map[string]st
 		prefix + "/" + PathGet: {
 			Method:             "GET",
 			PreHandler:         nil,
-			ParseRequestFunc:   RequestToQueryParams(table, columnMap),
+			ParseRequestFunc:   RequestToQueryParamsTransfer(table, transferMap, columnMap),
 			DataOperationFunc:  QueryGetFunc(db, queryDetailCols, transferMap),
 			TransferResultFunc: DoNothingTransferResultFunc,
 			RenderResponseFunc: RenderJson,
@@ -148,7 +148,7 @@ func NewCrud2(prefix string, table string, db *gom.DB, transferMap map[string]st
 		prefix + "/" + PathList: {
 			Method:             "GET",
 			PreHandler:         nil,
-			ParseRequestFunc:   RequestToQueryParams(table, columnMap),
+			ParseRequestFunc:   RequestToQueryParamsTransfer(table, transferMap, columnMap),
 			DataOperationFunc:  QueryListFunc(db, queryListCols, transferMap),
 			TransferResultFunc: DoNothingTransferResultFunc,
 			RenderResponseFunc: RenderJson,
@@ -223,7 +223,7 @@ func TransferMapFunc(transferMap map[string]string) func(any) (any, error) {
 		}
 	}
 }
-func RequestToQueryParams(tableName string, columnMap map[string]define.ColumnInfo) ParseRequestFunc {
+func RequestToQueryParamsTransfer(tableName string, transferMap map[string]string, columnMap map[string]define.ColumnInfo) ParseRequestFunc {
 	//  从request中
 	return func(c *gin.Context) (any, error) {
 		queryParams := QueryParams{}
@@ -255,6 +255,9 @@ func RequestToQueryParams(tableName string, columnMap map[string]define.ColumnIn
 			} else {
 				// 从k中解析出key和op
 				key, op := KeyToKeyOp(k)
+				if newKey, ok := transferMap[key]; ok {
+					key = newKey
+				}
 				column, ok := columnMap[key]
 				if !ok {
 					return nil, fmt.Errorf("column %s not found", key)
@@ -275,7 +278,7 @@ func RequestToQueryParams(tableName string, columnMap map[string]define.ColumnIn
 	}
 }
 func KeyToKeyOp(key string) (string, define.OpType) {
-	keys := strings.Split(key, "_")
+	keys := []string{key[:strings.LastIndex(key, "_")], key[strings.LastIndex(key, "_")+1:]}
 	key = keys[0]
 	opStr := keys[1]
 	op := define.OpEq
