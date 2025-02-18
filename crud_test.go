@@ -25,7 +25,7 @@ type TestUser struct {
 
 func setupTestDB(t *testing.T) *gom.DB {
 	// 配置测试数据库连接，更新密码为yzy123
-	db, err := gom.Open("postgres", "postgres://postgres:yzy123@192.168.110.249:5432/crud_test", &define.DBOptions{
+	db, err := gom.Open("postgres", "postgres://postgres:123456@10.0.1.5:5432/crud_test", &define.DBOptions{
 		Debug: true,
 	})
 	assert.NoError(t, err)
@@ -171,6 +171,9 @@ func TestNewCrud2(t *testing.T) {
 		assert.NoError(t, err)
 		insertResult := insertResponse.Data.(map[string]interface{})
 		insertedID := insertResult["id"]
+
+		// Debugging: Log the insertedID and result before verification
+		fmt.Printf("Inserted ID: %v\n", insertedID)
 
 		// 更新数据时需要包含ID
 		updateData := map[string]interface{}{

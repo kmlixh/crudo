@@ -448,12 +448,7 @@ func QuerySaveFunc(db *gom.DB, table string, primaryKeys []string) DataOperation
 					chain.Where(key, define.OpEq, mapData[key])
 				}
 			}
-			var result *define.Result
-			if hasPrimaryKey {
-				result = chain.Values(mapData).Update()
-			} else {
-				result = chain.Values(mapData).Save()
-			}
+			result := chain.Values(mapData).Save()
 			if result.Error != nil {
 				return nil, result.Error
 			}
