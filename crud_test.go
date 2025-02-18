@@ -145,7 +145,7 @@ func TestNewCrud2(t *testing.T) {
 		// 验证返回的数据列表
 		resultData, ok := response.Data.(map[string]interface{})
 		assert.True(t, ok)
-		dataList, ok := resultData["data"].([]interface{})
+		dataList, ok := resultData["list"].([]interface{})
 		assert.True(t, ok)
 		assert.GreaterOrEqual(t, len(dataList), 2)
 	})

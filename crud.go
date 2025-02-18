@@ -249,9 +249,25 @@ func RequestToQueryParamsTransfer(tableName string, transferMap map[string]strin
 				}
 				queryParams.PageSize = pageSize
 			} else if k == "orderBy" {
-				queryParams.OrderBy = v
+				vv := make([]string, 0)
+				for _, vi := range v {
+					if vk, ok := transferMap[vi]; ok {
+						vv = append(vv, vk)
+					} else {
+						vv = append(vv, vi)
+					}
+				}
+				queryParams.OrderBy = vv
 			} else if k == "orderByDesc" {
-				queryParams.OrderByDesc = v
+				vv := make([]string, 0)
+				for _, vi := range v {
+					if vk, ok := transferMap[vi]; ok {
+						vv = append(vv, vk)
+					} else {
+						vv = append(vv, vi)
+					}
+				}
+				queryParams.OrderByDesc = vv
 			} else {
 				// 从k中解析出key和op
 				key, op := KeyToKeyOp(k)
@@ -392,19 +408,22 @@ func QueryListFunc(db *gom.DB, queryCols []string, transferMap map[string]string
 				chain.OrderByDesc(orderByDesc)
 			}
 			chain.Page(queryParams.Page, queryParams.PageSize)
-			result := chain.List()
-			if len(result.Data) > 0 {
-				dataListMap := make([]map[string]any, len(result.Data))
-				for i, data := range result.Data {
+			pageInfo, err := chain.PageInfo()
+			if err != nil {
+				return nil, err
+			}
+			if pageInfo.List != nil && len(transferMap) > 0 {
+				dataListMap := make([]map[string]any, len(pageInfo.List.([]map[string]interface{})))
+				for i, data := range pageInfo.List.([]map[string]any) {
 					transferData, er := TransferDataMap(data, transferMap, true)
 					if er != nil {
 						return nil, er
 					}
 					dataListMap[i] = transferData
 				}
-				result.Data = dataListMap
+				pageInfo.List = dataListMap
 			}
-			return result, nil
+			return pageInfo, nil
 		}
 		return nil, fmt.Errorf("invalid input data type")
 	}
