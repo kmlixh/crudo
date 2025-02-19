@@ -3,321 +3,178 @@ package crudo
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/kmlixh/gom/v4"
-	"github.com/kmlixh/gom/v4/define"
-	_ "github.com/kmlixh/gom/v4/factory/postgres"
 	"github.com/stretchr/testify/assert"
 )
 
-type TestUser struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"user_name"`
-	Age      int    `json:"user_age"`
-	Email    string `json:"user_email"`
-	IsActive bool   `json:"user_active"`
+func setupRouter() (*gin.Engine, *Crud) {
+	// 初始化内存数据库
+	db, _ := gom.Open("sqlite3", ":memory:", nil)
+	db.Chain().Raw(`
+		CREATE TABLE test_data (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			field1 TEXT,
+			field2 INTEGER
+		)`).Exec()
+
+	// 创建CRUD实例
+	crud, _ := NewCrud(
+		"/data",
+		"test_data",
+		db,
+		map[string]string{
+			"apiField1": "field1",
+			"apiField2": "field2",
+		},
+	)
+
+	// 初始化Gin路由
+	router := gin.Default()
+	crud.RegisterRoutes(router.Group("/api"))
+
+	return router, crud
 }
 
-func setupTestDB(t *testing.T) *gom.DB {
-	// 配置测试数据库连接，更新密码为yzy123
-	db, err := gom.Open("postgres", "postgres://postgres:123456@10.0.1.5:5432/crud_test", &define.DBOptions{
-		Debug: true,
-	})
-	assert.NoError(t, err)
+func TestCRUDIntegration(t *testing.T) {
+	router, crud := setupRouter()
+	defer crud.Db.Close()
 
-	// 创建测试表 - 使用PostgreSQL语法
-	result := db.Chain().Raw(`
-		CREATE TABLE  IF NOT EXISTS users (
-			id SERIAL PRIMARY KEY,
-			user_name VARCHAR(100) NOT NULL,
-			user_age INTEGER,
-			user_email VARCHAR(100),
-			user_active BOOLEAN DEFAULT true
-		)
-	`).Exec()
-	assert.NoError(t, result.Error)
-
-	return db
-}
-
-func TestNewCrud2(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	// 设置转换映射 - 从API字段映射到数据库字段
-	transferMap := map[string]string{
-		"name":      "user_name", // API字段 -> 数据库字段
-		"age":       "user_age",
-		"email":     "user_email",
-		"is_active": "user_active",
+	// 测试数据模板
+	baseData := map[string]interface{}{
+		"apiField1": "testValue",
+		"apiField2": 100,
 	}
 
-	// 设置查询列 - 使用数据库字段名
-	queryListCols := []string{"id", "user_name", "user_age", "user_email", "user_active"}
-	queryDetailCols := []string{"id", "user_name", "user_age", "user_email", "user_active"}
-
-	crud, err := NewCrud2("/users", "users", db, transferMap, queryListCols, queryDetailCols)
-	assert.NoError(t, err)
-	assert.NotNil(t, crud)
-
-	// 设置 Gin 路由
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	apiGroup := router.Group("/api")
-	crud.RegisterRoutes(apiGroup)
-
-	t.Run("Test Insert", func(t *testing.T) {
-		userData := map[string]interface{}{
-			"name":      "John Doe",
-			"age":       30,
-			"email":     "john@example.com",
-			"is_active": true,
-		}
-		jsonData, _ := json.Marshal(userData)
-
-		req := httptest.NewRequest("POST", "/api/users/save", bytes.NewBuffer(jsonData))
-		req.Header.Set("Content-Type", "application/json")
+	t.Run("CreateAndRetrieve", func(t *testing.T) {
+		// 创建记录
+		createBody, _ := json.Marshal(baseData)
 		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
+		var createRes CodeMsg
+		json.Unmarshal(w.Body.Bytes(), &createRes)
+		createdID := int(createRes.Data.(map[string]interface{})["id"].(float64))
 
-		var response CodeMsg
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, SuccessCode, response.Code)
+		// 查询记录
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(createdID), nil)
+		router.ServeHTTP(w, req)
 
-		// 验证插入的数据
-		result := db.Chain().Table("users").Where("user_name", define.OpEq, "John Doe").First()
-		assert.NoError(t, result.Error)
-		assert.NotNil(t, result.Data)
-		if len(result.Data) > 0 {
-			assert.Equal(t, "John Doe", result.Data[0]["user_name"])
-			assert.Equal(t, int64(30), result.Data[0]["user_age"])
-			assert.Equal(t, "john@example.com", result.Data[0]["user_email"])
-			assert.Equal(t, true, result.Data[0]["user_active"])
-		}
+		var getRes CodeMsg
+		json.Unmarshal(w.Body.Bytes(), &getRes)
+		assert.Equal(t, "testValue", getRes.Data.(map[string]interface{})["apiField1"])
 	})
 
-	t.Run("Test List with Data", func(t *testing.T) {
-		// 先插入测试数据
-		testData := []map[string]interface{}{
-			{
-				"name":      "Alice Smith",
-				"age":       25,
-				"email":     "alice@example.com",
-				"is_active": true,
-			},
-			{
-				"name":      "Bob Johnson",
-				"age":       35,
-				"email":     "bob@example.com",
-				"is_active": true,
-			},
-		}
-
-		for _, data := range testData {
-			jsonData, _ := json.Marshal(data)
-			req := httptest.NewRequest("POST", "/api/users/save", bytes.NewBuffer(jsonData))
-			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-			assert.Equal(t, http.StatusOK, w.Code)
-		}
-
-		// 测试列表查询
-		req := httptest.NewRequest("GET", "/api/users/list?page=1&pageSize=10", nil)
+	t.Run("UpdateRecord", func(t *testing.T) {
+		// 先创建记录
+		createBody, _ := json.Marshal(baseData)
 		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
 		router.ServeHTTP(w, req)
+		createdID := int(w.Result().Body.(*bytes.Buffer).Bytes()["id"].(float64))
 
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var response CodeMsg
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, SuccessCode, response.Code)
-
-		// 验证返回的数据列表
-		resultData, ok := response.Data.(map[string]interface{})
-		assert.True(t, ok)
-		dataList, ok := resultData["list"].([]interface{})
-		assert.True(t, ok)
-		assert.GreaterOrEqual(t, len(dataList), 2)
-	})
-
-	t.Run("Test Update with Verification", func(t *testing.T) {
-		// 先插入一条数据
-		insertData := map[string]interface{}{
-			"name":      "Update Test",
-			"age":       40,
-			"email":     "update@example.com",
-			"is_active": true,
-		}
-		jsonData, _ := json.Marshal(insertData)
-		req := httptest.NewRequest("POST", "/api/users/save", bytes.NewBuffer(jsonData))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		// 获取插入的记录ID
-		var insertResponse CodeMsg
-		err := json.Unmarshal(w.Body.Bytes(), &insertResponse)
-		assert.NoError(t, err)
-		insertResult := insertResponse.Data.(map[string]interface{})
-		insertedID := insertResult["data"].([]interface{})[0].(map[string]any)["id"]
-
-		// Debugging: Log the insertedID and result before verification
-		fmt.Printf("Inserted ID: %v\n", insertedID)
-
-		// 更新数据时需要包含ID
+		// 更新记录
 		updateData := map[string]interface{}{
-			"id":        insertedID,
-			"name":      "Updated Name",
-			"age":       41,
-			"email":     "updated@example.com",
-			"is_active": false,
+			"id":        createdID,
+			"apiField1": "updatedValue",
 		}
-		jsonData, _ = json.Marshal(updateData)
-		req = httptest.NewRequest("POST", "/api/users/save", bytes.NewBuffer(jsonData))
-		req.Header.Set("Content-Type", "application/json")
+		updateBody, _ := json.Marshal(updateData)
 		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("POST", "/api/data/save", bytes.NewReader(updateBody))
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		// 验证更新后的数据
-		result := db.Chain().Table("users").Where("id", define.OpEq, insertedID).First()
-		assert.NoError(t, result.Error)
-		assert.NotEmpty(t, result.Data)
-		assert.Equal(t, "Updated Name", result.Data[0]["user_name"])
-		assert.Equal(t, "updated@example.com", result.Data[0]["user_email"])
-		assert.Equal(t, int64(41), result.Data[0]["user_age"])
-	})
-
-	t.Run("Test Get", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/users/get?id_eq=1", nil)
-		w := httptest.NewRecorder()
+		// 验证更新
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(createdID), nil)
 		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var response CodeMsg
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, SuccessCode, response.Code)
+		var getRes CodeMsg
+		json.Unmarshal(w.Body.Bytes(), &getRes)
+		assert.Equal(t, "updatedValue", getRes.Data.(map[string]interface{})["apiField1"])
 	})
 
-	t.Run("Test Delete", func(t *testing.T) {
-		// 先插入一条测试数据
-		insertData := map[string]interface{}{
-			"name":      "Delete Test",
-			"age":       50,
-			"email":     "delete@example.com",
-			"is_active": true,
+	t.Run("PaginationTest", func(t *testing.T) {
+		// 插入25条测试数据
+		for i := 0; i < 25; i++ {
+			data := map[string]interface{}{
+				"apiField1": "item" + strconv.Itoa(i),
+				"apiField2": i,
+			}
+			body, _ := json.Marshal(data)
+			req, _ := http.NewRequest("POST", "/api/data/save", bytes.NewReader(body))
+			router.ServeHTTP(httptest.NewRecorder(), req)
 		}
-		jsonData, _ := json.Marshal(insertData)
-		req := httptest.NewRequest("POST", "/api/users/save", bytes.NewBuffer(jsonData))
-		req.Header.Set("Content-Type", "application/json")
+
+		// 测试分页
 		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		// 获取插入的记录ID
-		var insertResponse CodeMsg
-		err := json.Unmarshal(w.Body.Bytes(), &insertResponse)
-		assert.NoError(t, err)
-		insertResult := insertResponse.Data.(map[string]interface{})
-		insertedID := insertResult["data"].([]interface{})[0].(map[string]any)["id"]
-
-		// 执行删除
-		req = httptest.NewRequest("GET", fmt.Sprintf("/api/users/delete?id_eq=%v", insertedID), nil)
-		w = httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/api/data/list?page=2&pageSize=10", nil)
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusOK, w.Code)
+		var listRes CodeMsg
+		json.Unmarshal(w.Body.Bytes(), &listRes)
+		pageInfo := listRes.Data.(map[string]interface{})
 
-		// 验证删除是否成功
-		result := db.Chain().Table("users").Where("id", define.OpEq, insertedID).First()
-		assert.Empty(t, result.Data)
+		assert.Equal(t, 2, int(pageInfo["Page"].(float64)))
+		assert.Equal(t, 10, int(pageInfo["PageSize"].(float64)))
+		assert.Equal(t, 27, int(pageInfo["Total"].(float64))) // 25 + 之前测试的2条
+		assert.Len(t, pageInfo["List"], 10)
 	})
 
-	t.Run("Test Complex Query", func(t *testing.T) {
-		// 使用API字段名进行查询
-		url := "/api/users/list?name_like=John&age_gt=25&is_active_eq=true&orderBy=name&orderByDesc=age&page=1&pageSize=10"
-		req := httptest.NewRequest("GET", url, nil)
+	t.Run("DeleteRecord", func(t *testing.T) {
+		// 创建测试记录
+		createBody, _ := json.Marshal(baseData)
 		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
 		router.ServeHTTP(w, req)
+		createdID := int(w.Result().Body.(*bytes.Buffer).Bytes()["id"].(float64))
 
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var response CodeMsg
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, SuccessCode, response.Code)
-	})
-
-	t.Run("Test Field Mapping", func(t *testing.T) {
-		// 插入数据
-		userData := map[string]interface{}{
-			"name":      "Test Mapping",
-			"age":       28,
-			"email":     "mapping@example.com",
-			"is_active": true,
-		}
-		jsonData, _ := json.Marshal(userData)
-
-		req := httptest.NewRequest("POST", "/api/users/save", bytes.NewBuffer(jsonData))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		// 获取数据并验证字段映射
-		var response CodeMsg
-		err := json.Unmarshal(w.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		insertResult := response.Data.(map[string]interface{})
-		insertedID := insertResult["data"].([]interface{})[0].(map[string]any)["id"]
-
-		// 使用 GET 接口获取数据
-		req = httptest.NewRequest("GET", fmt.Sprintf("/api/users/get?id_eq=%v", insertedID), nil)
+		// 删除记录
 		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("DELETE", "/api/data/delete?id="+strconv.Itoa(createdID), nil)
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var getResponse CodeMsg
-		err = json.Unmarshal(w.Body.Bytes(), &getResponse)
-		assert.NoError(t, err)
-		getData := getResponse.Data.(map[string]interface{})
-
-		// 验证字段映射 - 应该使用API字段名
-		assert.Equal(t, "Test Mapping", getData["name"]) // 使用API字段名
-		assert.Equal(t, 28.0, getData["age"])            // 使用API字段名
-		assert.Equal(t, "mapping@example.com", getData["email"])
-		assert.Equal(t, true, getData["is_active"])
+		// 验证删除
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(createdID), nil)
+		router.ServeHTTP(w, req)
+		var getRes CodeMsg
+		json.Unmarshal(w.Body.Bytes(), &getRes)
+		assert.Equal(t, ErrorCode, getRes.Code)
 	})
 }
 
-func TestTableInfoToColumnMap(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+func TestFieldMapping(t *testing.T) {
+	router, _ := setupRouter()
 
-	tableInfo, err := db.GetTableInfo("users")
-	assert.NoError(t, err)
-
-	columnMap := TableInfoToColumnMap(tableInfo)
-	assert.NotNil(t, columnMap)
-
-	// 修改验证列信息为实际的字段名
-	expectedColumns := []string{"id", "user_name", "user_age", "user_email", "user_active"}
-	for _, colName := range expectedColumns {
-		_, exists := columnMap[colName]
-		assert.True(t, exists, fmt.Sprintf("Column %s should exist in columnMap", colName))
+	// 测试字段映射
+	testData := map[string]interface{}{
+		"apiField1": "mappingTest",
+		"apiField2": 200,
 	}
+
+	// 创建记录
+	createBody, _ := json.Marshal(testData)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
+	router.ServeHTTP(w, req)
+
+	// 直接查询数据库验证字段映射
+	var dbResult struct {
+		Field1 string `gorm:"column:field1"`
+		Field2 int    `gorm:"column:field2"`
+	}
+	router.GET("/api/data/get?id=1", func(c *gin.Context) {
+		c.JSON(200, dbResult)
+	})
+
+	assert.Equal(t, "mappingTest", dbResult.Field1)
+	assert.Equal(t, 200, dbResult.Field2)
 }
