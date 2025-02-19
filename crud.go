@@ -102,6 +102,33 @@ func (qb *QueryBuilder) CacheTableInfo() (map[string]define.ColumnInfo, error) {
 	return qb.columnCache, nil
 }
 
+func (c *Crud) AddHandler(path string, h *RequestHandler) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.HandlerMap[path] = h
+}
+
+func (c *Crud) RegisterRoutes(r *gin.RouterGroup) {
+	for path, handler := range c.HandlerMap {
+		handlers := make([]gin.HandlerFunc, 0)
+		if handler.PreHandler != nil {
+			handlers = append(handlers, handler.PreHandler)
+		}
+		handlers = append(handlers, func(ctx *gin.Context) {
+			input, err := handler.ParseRequestFunc(ctx)
+			var result any
+			if err == nil {
+				result, err = handler.DataOperationFunc(input)
+			}
+			if err == nil && handler.TransferResultFunc != nil {
+				result, err = handler.TransferResultFunc(result)
+			}
+			handler.RenderResponseFunc(ctx, result, err)
+		})
+		r.Handle(handler.Method, path, handlers...)
+	}
+}
+
 func (c *Crud) InitDefaultHandler() error {
 	tableInfo, err := c.Db.GetTableInfo(c.Table)
 	if err != nil {
@@ -200,33 +227,29 @@ func (c *Crud) saveOperation() DataOperationFunc {
 			return nil, errors.New("invalid data format")
 		}
 
-		result := c.Db.Chain().Table(c.Table).Values(data).Save()
-		if result.Error != nil {
-			return nil, fmt.Errorf("save operation failed: %w", result.Error)
+		chain := c.Db.Chain().Table(c.Table)
+
+		// 检查是否是更新操作
+		var isUpdate bool
+		if id, hasID := data["id"]; hasID {
+			isUpdate = true
+			chain.Where("id", define.OpEq, id)
+			delete(data, "id")
 		}
-		return result.Data, nil
+
+		// 执行保存操作
+		var result *define.Result
+		if isUpdate {
+			result = chain.Values(data).Update()
+		} else {
+			result = chain.Values(data).Save()
+		}
+		return result, nil
 	}
 }
 
 // 其他操作实现类似，限于篇幅省略...
 // 完整实现需要补充deleteOperation/getOperation/listOperation
-
-func (c *Crud) AddHandler(path string, h *RequestHandler) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.HandlerMap[path] = h
-}
-
-func (c *Crud) RegisterRoutes(r *gin.RouterGroup) {
-	for path, handler := range c.HandlerMap {
-		handlers := make([]gin.HandlerFunc, 0)
-		if handler.PreHandler != nil {
-			handlers = append(handlers, handler.PreHandler)
-		}
-		handlers = append(handlers, handler.Handle)
-		r.Handle(handler.Method, path, handlers...)
-	}
-}
 
 func doNothingTransfer(input any) (any, error) {
 	return input, nil
@@ -318,7 +341,7 @@ func (c *Crud) deleteOperation() DataOperationFunc {
 		if result.Error != nil {
 			return nil, fmt.Errorf("delete failed: %w", result.Error)
 		}
-		return result.RowsAffected, nil
+		return result, nil
 	}
 }
 

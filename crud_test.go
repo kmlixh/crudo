@@ -3,6 +3,7 @@ package crudo
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -10,18 +11,28 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/kmlixh/gom/v4"
+	"github.com/kmlixh/gom/v4/define"
+	_ "github.com/kmlixh/gom/v4/factory/postgres"
 	"github.com/stretchr/testify/assert"
 )
 
 func setupRouter() (*gin.Engine, *Crud) {
 	// 初始化内存数据库
-	db, _ := gom.Open("sqlite3", ":memory:", nil)
-	db.Chain().Raw(`
-		CREATE TABLE test_data (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+	db, er := gom.Open("postgres", "host=192.168.111.20 user=postgres password=yzy123 dbname=crud_test port=5432 sslmode=disable", &define.DBOptions{Debug: true})
+	if er != nil {
+		panic(er)
+	}
+
+	// 创建表时使用PostgreSQL语法
+	result := db.Chain().Raw(`
+		CREATE TABLE IF NOT EXISTS test_data (
+			id BIGSERIAL PRIMARY KEY,
 			field1 TEXT,
 			field2 INTEGER
 		)`).Exec()
+	if result.Error != nil {
+		panic(fmt.Errorf("failed to create table: %v", result.Error))
+	}
 
 	// 创建CRUD实例
 	crud, _ := NewCrud(
@@ -61,16 +72,24 @@ func TestCRUDIntegration(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		var createRes CodeMsg
 		json.Unmarshal(w.Body.Bytes(), &createRes)
-		createdID := int(createRes.Data.(map[string]interface{})["id"].(float64))
+		if createRes.Data != nil {
+			if data, ok := createRes.Data.(map[string]interface{}); ok {
+				createdID := data["data"].([]any)[0].(map[string]interface{})["id"]
 
-		// 查询记录
-		w = httptest.NewRecorder()
-		req, _ = http.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(createdID), nil)
-		router.ServeHTTP(w, req)
+				// 查询记录
+				w = httptest.NewRecorder()
+				req, _ = http.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(int(createdID.(int64))), nil)
+				router.ServeHTTP(w, req)
 
-		var getRes CodeMsg
-		json.Unmarshal(w.Body.Bytes(), &getRes)
-		assert.Equal(t, "testValue", getRes.Data.(map[string]interface{})["apiField1"])
+				var getRes CodeMsg
+				json.Unmarshal(w.Body.Bytes(), &getRes)
+				assert.Equal(t, "testValue", getRes.Data.(map[string]interface{})["apiField1"])
+			} else {
+				t.Fatal("Invalid response data format")
+			}
+		} else {
+			t.Fatal("Empty response data")
+		}
 	})
 
 	t.Run("UpdateRecord", func(t *testing.T) {
@@ -79,7 +98,19 @@ func TestCRUDIntegration(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
 		router.ServeHTTP(w, req)
-		createdID := int(w.Result().Body.(*bytes.Buffer).Bytes()["id"].(float64))
+
+		var createRes CodeMsg
+		json.Unmarshal(w.Body.Bytes(), &createRes)
+
+		// 添加安全断言
+		if createRes.Data == nil {
+			t.Fatal("Create response data is empty")
+		}
+		dataMap, ok := createRes.Data.(map[string]interface{})
+		if !ok {
+			t.Fatal("Invalid create response format")
+		}
+		createdID := int(dataMap["id"].(float64))
 
 		// 更新记录
 		updateData := map[string]interface{}{
@@ -133,7 +164,9 @@ func TestCRUDIntegration(t *testing.T) {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
 		router.ServeHTTP(w, req)
-		createdID := int(w.Result().Body.(*bytes.Buffer).Bytes()["id"].(float64))
+		var createRes CodeMsg
+		json.Unmarshal(w.Body.Bytes(), &createRes)
+		createdID := int(createRes.Data.(map[string]interface{})["id"].(float64))
 
 		// 删除记录
 		w = httptest.NewRecorder()

@@ -1,0 +1,47 @@
+databases:
+- name: test
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  database: test
+- name: test2
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  database: test2
+cruds:
+- name: test
+  database: test
+  table: test
+  path: test
+  listFields:
+    - name: id
+      type: int
+    - name: name
+      type: varchar
+    - name: email
+      type: varchar
+  getFields:
+    - name: name
+      type: varchar
+    - name: email
+      type: varchar
+- name: test2
+  database: test2
+  table: test2
+  path: test2
+  listFields:
+    - name: id
+      type: int 
+    - name: name
+      type: varchar
+    - name: email
+      type: varchar
+  getFields:
+    - name: name
+      type: varchar 
+    - name: email
+      type: varchar
+
