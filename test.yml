@@ -17,31 +17,21 @@ cruds:
   table: test
   path: test
   listFields:
-    - name: id
-      type: int
-    - name: name
-      type: varchar
-    - name: email
-      type: varchar
+    - id
+    - name
+    - email
   getFields:
-    - name: name
-      type: varchar
-    - name: email
-      type: varchar
+    - name
+    - email
 - name: test2
   database: test2
   table: test2
   path: test2
   listFields:
-    - name: id
-      type: int 
-    - name: name
-      type: varchar
-    - name: email
-      type: varchar
+    - id
+    - name
+    - email
   getFields:
-    - name: name
-      type: varchar 
-    - name: email
-      type: varchar
+    - name
+    - email
 

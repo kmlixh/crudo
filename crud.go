@@ -24,6 +24,7 @@ const (
 	PathDelete = "delete"
 	PathGet    = "get"
 	PathList   = "list"
+	PathTable  = "table"
 )
 
 type (
@@ -41,14 +42,27 @@ type (
 )
 
 type RequestHandler struct {
-	Method     string
-	PreHandler gin.HandlerFunc
+	Method    string
+	PreHandle gin.HandlerFunc
 	ParseRequestFunc
 	DataOperationFunc
 	TransferResultFunc
 	RenderResponseFunc
 }
-
+type Column struct {
+	Name    string
+	Type    string
+	Comment string
+	IsKey   bool
+	IsAuto  bool
+}
+type TableInfo struct {
+	TableName      string
+	Comment        string
+	PrimaryKey     []string
+	PrimaryKeyAuto []string
+	Columns        []Column
+}
 type ICrud interface {
 	AddHandler(path string, h *RequestHandler)
 	RemoveHandler(path string)
@@ -107,25 +121,25 @@ func (c *Crud) AddHandler(path string, h *RequestHandler) {
 	defer c.mu.Unlock()
 	c.HandlerMap[path] = h
 }
-
+func (h *RequestHandler) Handle(c *gin.Context) {
+	input, err := h.ParseRequestFunc(c)
+	var result any
+	if err == nil {
+		result, err = h.DataOperationFunc(input)
+	}
+	if err == nil && h.TransferResultFunc != nil {
+		result, err = h.TransferResultFunc(result)
+	}
+	h.RenderResponseFunc(c, result, err)
+}
 func (c *Crud) RegisterRoutes(r *gin.RouterGroup) {
 	for path, handler := range c.HandlerMap {
 		handlers := make([]gin.HandlerFunc, 0)
-		if handler.PreHandler != nil {
-			handlers = append(handlers, handler.PreHandler)
+		if handler.PreHandle != nil {
+			handlers = append(handlers, handler.PreHandle)
 		}
-		handlers = append(handlers, func(ctx *gin.Context) {
-			input, err := handler.ParseRequestFunc(ctx)
-			var result any
-			if err == nil {
-				result, err = handler.DataOperationFunc(input)
-			}
-			if err == nil && handler.TransferResultFunc != nil {
-				result, err = handler.TransferResultFunc(result)
-			}
-			handler.RenderResponseFunc(ctx, result, err)
-		})
-		r.Handle(handler.Method, path, handlers...)
+		handlers = append(handlers, handler.Handle)
+		r.Handle(handler.Method, c.Prefix+"/"+path, handlers...)
 	}
 }
 
@@ -141,36 +155,72 @@ func (c *Crud) InitDefaultHandler() error {
 	}
 
 	c.HandlerMap = map[string]*RequestHandler{
-		c.Prefix + "/" + PathSave: {
+		PathSave: {
 			Method:             http.MethodPost,
 			ParseRequestFunc:   c.requestToMap(),
 			DataOperationFunc:  c.saveOperation(),
 			TransferResultFunc: doNothingTransfer,
 			RenderResponseFunc: renderJSON,
 		},
-		c.Prefix + "/" + PathDelete: {
+		PathDelete: {
 			Method:             http.MethodDelete,
 			ParseRequestFunc:   c.queryParamsParser(columnMap),
 			DataOperationFunc:  c.deleteOperation(),
 			TransferResultFunc: doNothingTransfer,
 			RenderResponseFunc: renderJSON,
 		},
-		c.Prefix + "/" + PathGet: {
+		PathGet: {
 			Method:             http.MethodGet,
 			ParseRequestFunc:   c.queryParamsParser(columnMap),
 			DataOperationFunc:  c.getOperation(),
 			TransferResultFunc: doNothingTransfer,
 			RenderResponseFunc: renderJSON,
 		},
-		c.Prefix + "/" + PathList: {
+		PathList: {
 			Method:             http.MethodGet,
 			ParseRequestFunc:   c.queryParamsParser(columnMap),
 			DataOperationFunc:  c.listOperation(),
 			TransferResultFunc: doNothingTransfer,
 			RenderResponseFunc: renderJSON,
 		},
+		PathTable: {
+			Method:             http.MethodGet,
+			DataOperationFunc:  c.tableOperation(),
+			TransferResultFunc: doNothingTransfer,
+			RenderResponseFunc: renderJSON,
+		},
 	}
 	return nil
+}
+func (c *Crud) tableOperation() DataOperationFunc {
+	return func(input any) (any, error) {
+		tableInfo, er := c.Db.GetTableInfo(c.Table)
+		if er != nil {
+			return nil, fmt.Errorf("failed to get table info: %w", er)
+		}
+		columns := make([]Column, 0)
+		primaryKeyAuto := make([]string, 0)
+		for _, col := range tableInfo.Columns {
+			columns = append(columns, Column{
+				Name:    col.Name,
+				Type:    col.DataType,
+				Comment: col.Comment,
+				IsKey:   col.IsPrimaryKey,
+				IsAuto:  col.IsAutoIncrement,
+			})
+			if col.IsAutoIncrement {
+				primaryKeyAuto = append(primaryKeyAuto, col.Name)
+			}
+		}
+		table := TableInfo{
+			TableName:      tableInfo.TableName,
+			Comment:        tableInfo.TableComment,
+			PrimaryKey:     tableInfo.PrimaryKeys,
+			PrimaryKeyAuto: primaryKeyAuto,
+			Columns:        columns,
+		}
+		return table, nil
+	}
 }
 
 func (c *Crud) requestToMap() ParseRequestFunc {
@@ -270,30 +320,20 @@ func renderJSON(ctx *gin.Context, data any, err error) {
 }
 
 // 使用示例
-func NewCrud(prefix, table string, db *gom.DB, transferMap map[string]string) (*Crud, error) {
+func NewCrud(prefix, table string, db *gom.DB, transferMap map[string]string, fieldOfList []string, fieldOfDetail []string) (*Crud, error) {
 	crud := &Crud{
-		Prefix:       prefix,
-		Table:        table,
-		Db:           db,
-		TransferMap:  transferMap,
-		queryBuilder: NewQueryBuilder(db, table),
+		Prefix:        prefix,
+		Table:         table,
+		Db:            db,
+		TransferMap:   transferMap,
+		FieldOfList:   fieldOfList,
+		FieldOfDetail: fieldOfDetail,
+		queryBuilder:  NewQueryBuilder(db, table),
 	}
 	if err := crud.InitDefaultHandler(); err != nil {
 		return nil, err
 	}
 	return crud, nil
-}
-
-func (h *RequestHandler) Handle(c *gin.Context) {
-	input, err := h.ParseRequestFunc(c)
-	var result any
-	if err == nil {
-		result, err = h.DataOperationFunc(input)
-	}
-	if err == nil && h.TransferResultFunc != nil {
-		result, err = h.TransferResultFunc(result)
-	}
-	h.RenderResponseFunc(c, result, err)
 }
 
 // 添加缺失的queryParamsParser方法
@@ -357,6 +397,9 @@ func (c *Crud) getOperation() DataOperationFunc {
 		for k, v := range params {
 			chain.Where(k, define.OpEq, v)
 		}
+		if c.FieldOfDetail != nil && len(c.FieldOfDetail) > 0 {
+			chain.Fields(c.FieldOfDetail...)
+		}
 
 		var result map[string]any
 		if err := chain.First(&result).Error; err != nil {
@@ -392,7 +435,9 @@ func (c *Crud) listOperation() DataOperationFunc {
 		if ps, ok := params["pageSize"].(int); ok {
 			pageSize = ps
 		}
-
+		if c.FieldOfList != nil && len(c.FieldOfList) > 0 {
+			chain.Fields(c.FieldOfList...)
+		}
 		// 执行分页查询
 		pageInfo, err := chain.Page(page, pageSize).PageInfo()
 		if err != nil {

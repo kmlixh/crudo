@@ -43,6 +43,8 @@ func setupRouter() (*gin.Engine, *Crud) {
 			"apiField1": "field1",
 			"apiField2": "field2",
 		},
+		nil,
+		nil,
 	)
 
 	// 初始化Gin路由
