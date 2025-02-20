@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/kmlixh/gom/v4"
@@ -88,6 +90,19 @@ type QueryBuilder struct {
 	columnCache map[string]define.ColumnInfo
 	columnLock  sync.RWMutex
 }
+type QueryParams struct {
+	Table           string           `json:"table"`
+	Page            int              `json:"page"`
+	PageSize        int              `json:"pageSize"`
+	ConditionParams []ConditionParam `json:"conditionParams"`
+	OrderBy         []string         `json:"orderBy"`
+	OrderByDesc     []string         `json:"orderByDesc"`
+}
+type ConditionParam struct {
+	Key    string        `json:"key"`
+	Op     define.OpType `json:"op"`
+	Values any           `json:"values"`
+}
 
 func NewQueryBuilder(db *gom.DB, table string) *QueryBuilder {
 	return &QueryBuilder{
@@ -164,21 +179,21 @@ func (c *Crud) InitDefaultHandler() error {
 		},
 		PathDelete: {
 			Method:             http.MethodDelete,
-			ParseRequestFunc:   c.queryParamsParser(columnMap),
+			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, columnMap),
 			DataOperationFunc:  c.deleteOperation(),
 			TransferResultFunc: doNothingTransfer,
 			RenderResponseFunc: renderJSON,
 		},
 		PathGet: {
 			Method:             http.MethodGet,
-			ParseRequestFunc:   c.queryParamsParser(columnMap),
+			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, columnMap),
 			DataOperationFunc:  c.getOperation(),
 			TransferResultFunc: doNothingTransfer,
 			RenderResponseFunc: renderJSON,
 		},
 		PathList: {
 			Method:             http.MethodGet,
-			ParseRequestFunc:   c.queryParamsParser(columnMap),
+			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, columnMap),
 			DataOperationFunc:  c.listOperation(),
 			TransferResultFunc: doNothingTransfer,
 			RenderResponseFunc: renderJSON,
@@ -335,46 +350,255 @@ func NewCrud(prefix, table string, db *gom.DB, transferMap map[string]string, fi
 	}
 	return crud, nil
 }
-
-// 添加缺失的queryParamsParser方法
-func (c *Crud) queryParamsParser(columns map[string]define.ColumnInfo) ParseRequestFunc {
-	return func(ctx *gin.Context) (any, error) {
-		params := make(map[string]any)
-		for k, v := range ctx.Request.URL.Query() {
-			if len(v) > 0 {
-				// 自动转换数字类型
-				if col, ok := columns[k]; ok {
-					switch col.DataType {
-					case "int", "integer":
-						if num, err := strconv.Atoi(v[0]); err == nil {
-							params[k] = num
-							continue
-						}
-					case "bigint":
-						if num, err := strconv.ParseInt(v[0], 10, 64); err == nil {
-							params[k] = num
-							continue
-						}
+func RequestToQueryParamsTransfer(tableName string, transferMap map[string]string, columnMap map[string]define.ColumnInfo) ParseRequestFunc {
+	//  从request中
+	return func(c *gin.Context) (any, error) {
+		queryParams := QueryParams{}
+		queryParams.Table = tableName
+		// 从Request的Query生成一个Map
+		for k, v := range c.Request.URL.Query() {
+			if k == "page" {
+				page, err := strconv.Atoi(v[0])
+				if err != nil {
+					return nil, err
+				}
+				if page < 1 {
+					page = 1
+				}
+				queryParams.Page = page
+			} else if k == "pageSize" {
+				pageSize, err := strconv.Atoi(v[0])
+				if err != nil {
+					return nil, err
+				}
+				if pageSize < 1 {
+					pageSize = 10
+				}
+				queryParams.PageSize = pageSize
+			} else if k == "orderBy" {
+				vv := make([]string, 0)
+				for _, vi := range v {
+					if vk, ok := transferMap[vi]; ok {
+						vv = append(vv, vk)
+					} else {
+						vv = append(vv, vi)
 					}
 				}
-				params[k] = v[0]
+				queryParams.OrderBy = vv
+			} else if k == "orderByDesc" {
+				vv := make([]string, 0)
+				for _, vi := range v {
+					if vk, ok := transferMap[vi]; ok {
+						vv = append(vv, vk)
+					} else {
+						vv = append(vv, vi)
+					}
+				}
+				queryParams.OrderByDesc = vv
+			} else {
+				// 从k中解析出key和op
+				key, op := KeyToKeyOp(k)
+				if newKey, ok := transferMap[key]; ok {
+					key = newKey
+				}
+				column, ok := columnMap[key]
+				if !ok {
+					return nil, fmt.Errorf("column %s not found", key)
+				}
+				values, err := QueryValuesToValues(op, v, column)
+				if err != nil {
+					return nil, err
+				}
+				queryParams.ConditionParams = append(queryParams.ConditionParams, ConditionParam{
+					Key:    key,
+					Op:     op,
+					Values: values,
+				})
 			}
 		}
-		return c.transferData(params, false)
+
+		return queryParams, nil
 	}
 }
+func QueryValuesToValues(op define.OpType, values []string, column define.ColumnInfo) (any, error) {
+	//将values转换为[]any
+	var err error
+	transferTypeFunc := TransferType(column)
+	anyValues := make([]any, len(values))
+	for i, v := range values {
+		anyValues[i], err = transferTypeFunc(v)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(values) == 1 {
+		return anyValues[0], nil
+	}
+	return anyValues, nil
+}
+
+type TransferTypeFunc func(any string) (any, error)
+
+func TransferType(column define.ColumnInfo) TransferTypeFunc {
+	switch column.DataType {
+	case "string":
+		return func(v string) (any, error) {
+			return v, nil
+		}
+	case "int8":
+		return func(v string) (any, error) {
+			val, err := strconv.ParseInt(v, 10, 8)
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "int16":
+		return func(v string) (any, error) {
+			val, err := strconv.ParseInt(v, 10, 16)
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "int32":
+		return func(v string) (any, error) {
+			val, err := strconv.ParseInt(v, 10, 32)
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "bool":
+		return func(v string) (any, error) {
+			val, err := strconv.ParseBool(v)
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "time.Time":
+		return func(v string) (any, error) {
+			val, err := time.Parse(time.RFC3339, v)
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "uint8":
+		return func(v string) (any, error) {
+			val, err := strconv.ParseUint(v, 10, 8)
+			if err != nil {
+				return nil, err
+			}
+			return uint8(val), nil
+		}
+	case "uint16":
+		return func(v string) (any, error) {
+			val, err := strconv.ParseUint(v, 10, 16)
+			if err != nil {
+				return nil, err
+			}
+			return uint16(val), nil
+		}
+	case "uint32":
+		return func(v string) (any, error) {
+			val, err := strconv.ParseUint(v, 10, 32)
+			if err != nil {
+				return nil, err
+			}
+			return uint32(val), nil
+		}
+	case "uint64":
+		return func(v string) (any, error) {
+			val, err := strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				return nil, err
+			}
+			return uint64(val), nil
+		}
+	case "float32":
+		return func(v string) (any, error) {
+			val, err := strconv.ParseFloat(v, 32)
+			if err != nil {
+				return nil, err
+			}
+			return float32(val), nil
+		}
+	case "float64":
+		return func(v string) (any, error) {
+			val, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return nil, err
+			}
+			return val, nil
+		}
+	case "[]byte":
+		return func(v string) (any, error) {
+			return []byte(v), nil
+		}
+	case "[]uint8":
+		return func(v string) (any, error) {
+			return []uint8(v), nil
+		}
+	default:
+		return func(v string) (any, error) {
+			return v, nil
+		}
+	}
+}
+
+func KeyToKeyOp(key string) (string, define.OpType) {
+	keys := []string{key[:strings.LastIndex(key, "_")], key[strings.LastIndex(key, "_")+1:]}
+	key = keys[0]
+	opStr := keys[1]
+	op := define.OpEq
+	switch opStr {
+	case "eq":
+		op = define.OpEq
+	case "ne":
+		op = define.OpNe
+	case "gt":
+		op = define.OpGt
+	case "ge":
+		op = define.OpGe
+	case "lt":
+		op = define.OpLt
+	case "le":
+		op = define.OpLe
+	case "in":
+		op = define.OpIn
+	case "notIn":
+		op = define.OpNotIn
+	case "isNull":
+		op = define.OpIsNull
+	case "isNotNull":
+		op = define.OpIsNotNull
+	case "between":
+		op = define.OpBetween
+	case "notBetween":
+		op = define.OpNotBetween
+	case "like":
+		op = define.OpLike
+	case "notLike":
+		op = define.OpNotLike
+	}
+	return key, op
+}
+
+// 添加缺失的queryParamsParser方法
 
 // 添加deleteOperation方法
 func (c *Crud) deleteOperation() DataOperationFunc {
 	return func(input any) (any, error) {
-		params, ok := input.(map[string]any)
+		params, ok := input.(QueryParams)
 		if !ok {
 			return nil, errors.New("invalid delete parameters")
 		}
 
 		chain := c.Db.Chain().Table(c.Table)
-		for k, v := range params {
-			chain.Where(k, define.OpEq, v)
+		for _, v := range params.ConditionParams {
+			chain.Where(v.Key, v.Op, v.Values)
 		}
 
 		result := chain.Delete()
@@ -388,16 +612,16 @@ func (c *Crud) deleteOperation() DataOperationFunc {
 // 添加getOperation方法
 func (c *Crud) getOperation() DataOperationFunc {
 	return func(input any) (any, error) {
-		params, ok := input.(map[string]any)
+		params, ok := input.(QueryParams)
 		if !ok {
 			return nil, errors.New("invalid get parameters")
 		}
 
 		chain := c.Db.Chain().Table(c.Table)
-		for k, v := range params {
-			chain.Where(k, define.OpEq, v)
+		for _, v := range params.ConditionParams {
+			chain.Where(v.Key, v.Op, v.Values)
 		}
-		if c.FieldOfDetail != nil && len(c.FieldOfDetail) > 0 {
+		if len(c.FieldOfDetail) > 0 {
 			chain.Fields(c.FieldOfDetail...)
 		}
 
@@ -412,30 +636,34 @@ func (c *Crud) getOperation() DataOperationFunc {
 // 修改后的分页处理逻辑
 func (c *Crud) listOperation() DataOperationFunc {
 	return func(input any) (any, error) {
-		params, ok := input.(map[string]any)
+		params, ok := input.(QueryParams)
 		if !ok {
 			return nil, errors.New("invalid list parameters")
 		}
 
 		chain := c.Db.Chain().Table(c.Table)
-		for k, v := range params {
-			if k == "page" || k == "pageSize" {
-				continue
+		for _, v := range params.ConditionParams {
+			chain.Where(v.Key, v.Op, v.Values)
+		}
+		page := params.Page
+		pageSize := params.PageSize
+		if pageSize == 0 {
+			pageSize = 10
+		}
+		if page == 0 {
+			page = 1
+		}
+		if len(params.OrderBy) > 0 {
+			for _, v := range params.OrderBy {
+				chain.OrderBy(v)
 			}
-			chain.Where(k, define.OpEq, v)
 		}
-
-		// 分页参数处理
-		page := 1
-		if p, ok := params["page"].(int); ok {
-			page = p
+		if len(params.OrderByDesc) > 0 {
+			for _, v := range params.OrderByDesc {
+				chain.OrderByDesc(v)
+			}
 		}
-
-		pageSize := 10
-		if ps, ok := params["pageSize"].(int); ok {
-			pageSize = ps
-		}
-		if c.FieldOfList != nil && len(c.FieldOfList) > 0 {
+		if len(c.FieldOfList) > 0 {
 			chain.Fields(c.FieldOfList...)
 		}
 		// 执行分页查询
