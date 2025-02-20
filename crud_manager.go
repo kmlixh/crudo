@@ -100,39 +100,29 @@ func (cm *CrudManager) init() error {
 }
 
 // 注册统一路由
-func (cm *CrudManager) RegisterRoutes(r *gin.Engine) {
-	group := r.Group("/:table")
-	{
-		group.POST("/"+PathSave, cm.handleSave)
-		group.DELETE("/"+PathDelete, cm.handleDelete)
-		group.GET("/"+PathGet, cm.handleGet)
-		group.GET("/"+PathList, cm.handleList)
-		group.GET("/"+PathTable, cm.handleTable)
-	}
+func (cm *CrudManager) RegisterRoutes(r *gin.RouterGroup) {
+	r.Any("/:table/:operation", cm.handle)
 }
-
-// 通用请求处理
-func (cm *CrudManager) getCrudInstance(c *gin.Context) (*Crud, bool) {
-	tableName := c.Param("table")
-
-	cm.mu.RLock()
-	instance, exists := cm.tables[tableName]
-	cm.mu.RUnlock()
-
-	if !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "table not configured"})
-		return nil, false
-	}
-	return instance, true
-}
-func (cm *CrudManager) handleTable(c *gin.Context) {
-	instance, ok := cm.getCrudInstance(c)
+func (cm *CrudManager) handle(c *gin.Context) {
+	table := c.Param("table")
+	operation := c.Param("operation")
+	instance, ok := cm.getCrudInstance(table)
 	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "table not configured"})
+		c.Abort()
 		return
 	}
-	requestHandler, ok := instance.HandlerMap[PathTable]
+
+	requestHandler, ok := instance.HandlerMap[operation]
 	if !ok || requestHandler == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "table not configured"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "operation not configured"})
+		c.Abort()
+		return
+	}
+	if c.Request.Method != requestHandler.Method {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed"})
+		c.Abort()
+		return
 	}
 	if requestHandler.PreHandle != nil {
 		requestHandler.PreHandle(c)
@@ -143,26 +133,17 @@ func (cm *CrudManager) handleTable(c *gin.Context) {
 	requestHandler.Handle(c)
 }
 
-// 示例处理函数：保存
-func (cm *CrudManager) handleSave(c *gin.Context) {
-	instance, ok := cm.getCrudInstance(c)
-	if !ok {
-		return
+// 通用请求处理
+func (cm *CrudManager) getCrudInstance(tableName string) (*Crud, bool) {
+
+	cm.mu.RLock()
+	instance, exists := cm.tables[tableName]
+	cm.mu.RUnlock()
+
+	if !exists {
+		return nil, false
 	}
-	instance.HandlerMap[PathSave].Handle(c)
-}
-
-// 添加缺失的处理方法
-func (cm *CrudManager) handleDelete(c *gin.Context) {
-
-}
-
-func (cm *CrudManager) handleGet(c *gin.Context) {
-
-}
-
-func (cm *CrudManager) handleList(c *gin.Context) {
-
+	return instance, true
 }
 
 // 辅助函数检查slice包含
