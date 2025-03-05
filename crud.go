@@ -29,20 +29,6 @@ const (
 	PathTable  = "table"
 )
 
-type (
-	CodeMsg struct {
-		Code    int    `json:"code"`
-		Data    any    `json:"data"`
-		Message string `json:"msg"`
-	}
-
-	ParseRequestFunc     func(*gin.Context) (any, error)
-	DataOperationFunc    func(any) (any, error)
-	TransferResultFunc   func(any) (any, error)
-	RenderResponseFunc   func(*gin.Context, any, error)
-	ValidationMiddleware func(*gin.Context) error
-)
-
 type RequestHandler struct {
 	Method    string
 	PreHandle gin.HandlerFunc
@@ -257,23 +243,51 @@ func (c *Crud) requestToMap() ParseRequestFunc {
 
 func (c *Crud) transferData(input map[string]any, reverse bool) (map[string]any, error) {
 	output := make(map[string]any)
-	for k, v := range input {
-		if k == "id" {
-			output[k] = v
-			continue
-		}
 
-		mappedKey := c.TransferMap[k]
-		if reverse {
-			if origKey, exists := c.reverseMap()[k]; exists {
-				output[origKey] = v
+	// 总是保留 id 字段
+	if id, ok := input["id"]; ok {
+		output["id"] = id
+	}
+
+	// 如果没有映射配置，直接返回原始数据
+	if len(c.TransferMap) == 0 {
+		for k, v := range input {
+			if k != "id" { // 避免重复添加 id
+				output[k] = v
 			}
-		} else if mappedKey != "" {
-			output[mappedKey] = v
-		} else {
-			output[k] = v
+		}
+		return output, nil
+	}
+
+	// 应用字段映射
+	if reverse {
+		// 数据库字段名 -> API 字段名
+		for apiField, dbField := range c.TransferMap {
+			if val, ok := input[dbField]; ok {
+				output[apiField] = val
+			}
+		}
+		// 保留未映射的字段
+		for k, v := range input {
+			if _, mapped := c.reverseMap()[k]; !mapped && k != "id" {
+				output[k] = v
+			}
+		}
+	} else {
+		// API 字段名 -> 数据库字段名
+		for apiField, dbField := range c.TransferMap {
+			if val, ok := input[apiField]; ok {
+				output[dbField] = val
+			}
+		}
+		// 保留未映射的字段
+		for k, v := range input {
+			if _, mapped := c.TransferMap[k]; !mapped && k != "id" {
+				output[k] = v
+			}
 		}
 	}
+
 	return output, nil
 }
 
@@ -306,10 +320,31 @@ func (c *Crud) saveOperation() DataOperationFunc {
 		var result *define.Result
 		if isUpdate {
 			result = chain.Values(data).Update()
+			if result.Error != nil {
+				return nil, result.Error
+			}
+			// 对于更新操作，重新查询获取更新后的数据
+			queryResult := chain.First()
+			if queryResult.Error != nil {
+				return nil, queryResult.Error
+			}
+			if len(queryResult.Data) == 0 {
+				return nil, errors.New("failed to retrieve saved data")
+			}
+			// 转换字段名称并返回
+			return c.transferData(queryResult.Data[0], true)
 		} else {
-			result = chain.Values(data).Save()
+			// 对于插入操作，使用 RETURNING * 获取插入的数据
+			result = chain.Values(data).Raw("RETURNING *").Save()
+			if result.Error != nil {
+				return nil, result.Error
+			}
+			if len(result.Data) == 0 {
+				return nil, errors.New("failed to retrieve saved data")
+			}
+			// 转换字段名称并返回
+			return c.transferData(result.Data[0], true)
 		}
-		return result, nil
 	}
 }
 
@@ -326,6 +361,10 @@ func renderJSON(ctx *gin.Context, data any, err error) {
 	if err != nil {
 		code = ErrorCode
 		msg = err.Error()
+		data = nil
+	}
+	if data == nil {
+		data = map[string]interface{}{}
 	}
 	ctx.JSON(http.StatusOK, CodeMsg{
 		Code:    code,
@@ -549,10 +588,15 @@ func TransferType(column define.ColumnInfo) TransferTypeFunc {
 }
 
 func KeyToKeyOp(key string) (string, define.OpType) {
-	keys := []string{key[:strings.LastIndex(key, "_")], key[strings.LastIndex(key, "_")+1:]}
-	key = keys[0]
-	opStr := keys[1]
+	lastIndex := strings.LastIndex(key, "_")
+	if lastIndex == -1 {
+		return key, define.OpEq
+	}
+
+	field := key[:lastIndex]
+	opStr := key[lastIndex+1:]
 	op := define.OpEq
+
 	switch opStr {
 	case "eq":
 		op = define.OpEq
@@ -583,7 +627,8 @@ func KeyToKeyOp(key string) (string, define.OpType) {
 	case "notLike":
 		op = define.OpNotLike
 	}
-	return key, op
+
+	return field, op
 }
 
 // 添加缺失的queryParamsParser方法
@@ -625,11 +670,17 @@ func (c *Crud) getOperation() DataOperationFunc {
 			chain.Fields(c.FieldOfDetail...)
 		}
 
-		var result map[string]any
-		if err := chain.First(&result).Error; err != nil {
-			return nil, fmt.Errorf("get failed: %w", err)
+		result := chain.First()
+		if result.Error != nil {
+			return nil, fmt.Errorf("get failed: %w", result.Error)
 		}
-		return c.transferData(result, true) // 反向转换字段
+
+		if len(result.Data) == 0 {
+			return nil, errors.New("record not found")
+		}
+
+		// 转换字段名称
+		return c.transferData(result.Data[0], true)
 	}
 }
 
@@ -666,27 +717,33 @@ func (c *Crud) listOperation() DataOperationFunc {
 		if len(c.FieldOfList) > 0 {
 			chain.Fields(c.FieldOfList...)
 		}
-		// 执行分页查询
-		pageInfo, err := chain.Page(page, pageSize).PageInfo()
+
+		// 获取总数
+		total, err := chain.Count()
 		if err != nil {
-			return nil, fmt.Errorf("list query failed: %w", err)
+			return nil, fmt.Errorf("count failed: %w", err)
 		}
-		originData, ok := pageInfo.List.([]any)
-		if !ok {
-			return nil, errors.New("invalid list data")
+
+		// 执行分页查询
+		result := chain.Limit(pageSize).Offset((page - 1) * pageSize).List()
+		if result.Error != nil {
+			return nil, fmt.Errorf("list query failed: %w", result.Error)
 		}
+
 		// 转换分页结果
 		var converted []map[string]any
-		for _, item := range originData {
-			if data, ok := item.(map[string]any); ok {
-				if convertedData, err := c.transferData(data, true); err == nil {
-					converted = append(converted, convertedData)
-				}
+		for _, item := range result.Data {
+			if convertedData, err := c.transferData(item, true); err == nil {
+				converted = append(converted, convertedData)
 			}
 		}
 
-		// 重建分页结构
-		pageInfo.List = converted
-		return pageInfo, nil
+		// 构建分页响应
+		return map[string]any{
+			"Page":     page,
+			"PageSize": pageSize,
+			"Total":    total,
+			"List":     converted,
+		}, nil
 	}
 }

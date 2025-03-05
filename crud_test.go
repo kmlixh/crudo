@@ -23,8 +23,14 @@ func setupRouter() (*gin.Engine, *Crud) {
 		panic(er)
 	}
 
+	// 清理表
+	result := db.Chain().Raw("DROP TABLE IF EXISTS test_data").Exec()
+	if result.Error != nil {
+		panic(fmt.Errorf("failed to drop table: %v", result.Error))
+	}
+
 	// 创建表时使用PostgreSQL语法
-	result := db.Chain().Raw(`
+	result = db.Chain().Raw(`
 		CREATE TABLE IF NOT EXISTS test_data (
 			id BIGSERIAL PRIMARY KEY,
 			field1 TEXT,
@@ -65,33 +71,37 @@ func TestCRUDIntegration(t *testing.T) {
 	}
 
 	t.Run("CreateAndRetrieve", func(t *testing.T) {
-		// 创建记录
-		createBody, _ := json.Marshal(baseData)
+		// Create record
+		createData := map[string]interface{}{
+			"apiField1": "testValue",
+			"apiField2": 100,
+		}
+
+		createBody, _ := json.Marshal(createData)
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		var createRes CodeMsg
-		json.Unmarshal(w.Body.Bytes(), &createRes)
-		if createRes.Data != nil {
-			if data, ok := createRes.Data.(map[string]interface{}); ok {
-				createdID := data["data"].([]any)[0].(map[string]interface{})["id"]
+		err := json.Unmarshal(w.Body.Bytes(), &createRes)
+		assert.NoError(t, err)
+		assert.NotNil(t, createRes.Data, "Response data should not be nil")
 
-				// 查询记录
-				w = httptest.NewRecorder()
-				req, _ = http.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(int(createdID.(int64))), nil)
-				router.ServeHTTP(w, req)
+		responseData, ok := createRes.Data.(map[string]interface{})
+		assert.True(t, ok, "Response data should be a map")
+		assert.NotNil(t, responseData["id"], "Response should contain an ID")
 
-				var getRes CodeMsg
-				json.Unmarshal(w.Body.Bytes(), &getRes)
-				assert.Equal(t, "testValue", getRes.Data.(map[string]interface{})["apiField1"])
-			} else {
-				t.Fatal("Invalid response data format")
-			}
-		} else {
-			t.Fatal("Empty response data")
-		}
+		createdID := int(responseData["id"].(float64))
+
+		// 查询记录
+		w = httptest.NewRecorder()
+		req, _ = http.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(createdID), nil)
+		router.ServeHTTP(w, req)
+
+		var getRes CodeMsg
+		json.Unmarshal(w.Body.Bytes(), &getRes)
+		assert.Equal(t, "testValue", getRes.Data.(map[string]interface{})["apiField1"])
 	})
 
 	t.Run("UpdateRecord", func(t *testing.T) {
@@ -187,7 +197,8 @@ func TestCRUDIntegration(t *testing.T) {
 }
 
 func TestFieldMapping(t *testing.T) {
-	router, _ := setupRouter()
+	router, crud := setupRouter()
+	defer crud.Db.Close()
 
 	// 测试字段映射
 	testData := map[string]interface{}{
@@ -201,15 +212,27 @@ func TestFieldMapping(t *testing.T) {
 	req, _ := http.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
 	router.ServeHTTP(w, req)
 
-	// 直接查询数据库验证字段映射
-	var dbResult struct {
-		Field1 string `gorm:"column:field1"`
-		Field2 int    `gorm:"column:field2"`
-	}
-	router.GET("/api/data/get?id=1", func(c *gin.Context) {
-		c.JSON(200, dbResult)
-	})
+	// 验证响应
+	var createRes CodeMsg
+	err := json.Unmarshal(w.Body.Bytes(), &createRes)
+	assert.NoError(t, err)
+	assert.NotNil(t, createRes.Data)
 
-	assert.Equal(t, "mappingTest", dbResult.Field1)
-	assert.Equal(t, 200, dbResult.Field2)
+	responseData, ok := createRes.Data.(map[string]interface{})
+	assert.True(t, ok, "Response data should be a map")
+	assert.NotNil(t, responseData["id"], "Response should contain an ID")
+
+	createdID := int(responseData["id"].(float64))
+
+	// 查询记录
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(createdID), nil)
+	router.ServeHTTP(w, req)
+
+	var getRes CodeMsg
+	json.Unmarshal(w.Body.Bytes(), &getRes)
+	getData := getRes.Data.(map[string]interface{})
+
+	assert.Equal(t, "mappingTest", getData["apiField1"])
+	assert.Equal(t, float64(200), getData["apiField2"])
 }
