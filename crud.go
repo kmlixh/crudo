@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"github.com/kmlixh/gom/v4"
 	"github.com/kmlixh/gom/v4/define"
 )
@@ -31,12 +31,13 @@ const (
 
 type RequestHandler struct {
 	Method    string
-	PreHandle gin.HandlerFunc
+	PreHandle fiber.Handler
 	ParseRequestFunc
 	DataOperationFunc
 	TransferResultFunc
 	RenderResponseFunc
 }
+
 type Column struct {
 	Name    string
 	Type    string
@@ -44,6 +45,7 @@ type Column struct {
 	IsKey   bool
 	IsAuto  bool
 }
+
 type TableInfo struct {
 	TableName      string
 	Comment        string
@@ -51,11 +53,12 @@ type TableInfo struct {
 	PrimaryKeyAuto []string
 	Columns        []Column
 }
+
 type ICrud interface {
 	AddHandler(path string, h *RequestHandler)
 	RemoveHandler(path string)
 	GetHandler(path string) (*RequestHandler, bool)
-	RegisterRoutes(r *gin.RouterGroup)
+	RegisterRoutes(r fiber.Router)
 }
 
 type Crud struct {
@@ -76,6 +79,7 @@ type QueryBuilder struct {
 	columnCache map[string]define.ColumnInfo
 	columnLock  sync.RWMutex
 }
+
 type QueryParams struct {
 	Table           string           `json:"table"`
 	Page            int              `json:"page"`
@@ -84,6 +88,7 @@ type QueryParams struct {
 	OrderBy         []string         `json:"orderBy"`
 	OrderByDesc     []string         `json:"orderByDesc"`
 }
+
 type ConditionParam struct {
 	Key    string        `json:"key"`
 	Op     define.OpType `json:"op"`
@@ -122,7 +127,8 @@ func (c *Crud) AddHandler(path string, h *RequestHandler) {
 	defer c.mu.Unlock()
 	c.HandlerMap[path] = h
 }
-func (h *RequestHandler) Handle(c *gin.Context) {
+
+func (h *RequestHandler) Handle(c *fiber.Ctx) error {
 	input, err := h.ParseRequestFunc(c)
 	var result any
 	if err == nil {
@@ -131,16 +137,16 @@ func (h *RequestHandler) Handle(c *gin.Context) {
 	if err == nil && h.TransferResultFunc != nil {
 		result, err = h.TransferResultFunc(result)
 	}
-	h.RenderResponseFunc(c, result, err)
+	return h.RenderResponseFunc(c, result, err)
 }
-func (c *Crud) RegisterRoutes(r *gin.RouterGroup) {
+
+func (c *Crud) RegisterRoutes(r fiber.Router) {
 	for path, handler := range c.HandlerMap {
-		handlers := make([]gin.HandlerFunc, 0)
 		if handler.PreHandle != nil {
-			handlers = append(handlers, handler.PreHandle)
+			r.Add(handler.Method, c.Prefix+"/"+path, handler.PreHandle, handler.Handle)
+		} else {
+			r.Add(handler.Method, c.Prefix+"/"+path, handler.Handle)
 		}
-		handlers = append(handlers, handler.Handle)
-		r.Handle(handler.Method, c.Prefix+"/"+path, handlers...)
 	}
 }
 
@@ -193,6 +199,7 @@ func (c *Crud) InitDefaultHandler() error {
 	}
 	return nil
 }
+
 func (c *Crud) tableOperation() DataOperationFunc {
 	return func(input any) (any, error) {
 		tableInfo, er := c.Db.GetTableInfo(c.Table)
@@ -225,13 +232,13 @@ func (c *Crud) tableOperation() DataOperationFunc {
 }
 
 func (c *Crud) requestToMap() ParseRequestFunc {
-	return func(ctx *gin.Context) (any, error) {
+	return func(ctx *fiber.Ctx) (any, error) {
 		data := make(map[string]any)
-		if err := ctx.ShouldBindJSON(&data); err != nil {
+		if err := ctx.BodyParser(&data); err != nil {
 			return nil, fmt.Errorf("invalid request body: %w", err)
 		}
 
-		if idParam := ctx.Param("id"); idParam != "" {
+		if idParam := ctx.Params("id"); idParam != "" {
 			if id, err := strconv.ParseInt(idParam, 10, 64); err == nil {
 				data["id"] = id
 			}
@@ -355,7 +362,7 @@ func doNothingTransfer(input any) (any, error) {
 	return input, nil
 }
 
-func renderJSON(ctx *gin.Context, data any, err error) {
+func renderJSON(ctx *fiber.Ctx, data any, err error) error {
 	code := SuccessCode
 	msg := SuccessMsg
 	if err != nil {
@@ -366,7 +373,7 @@ func renderJSON(ctx *gin.Context, data any, err error) {
 	if data == nil {
 		data = map[string]interface{}{}
 	}
-	ctx.JSON(http.StatusOK, CodeMsg{
+	return ctx.Status(http.StatusOK).JSON(CodeMsg{
 		Code:    code,
 		Data:    data,
 		Message: msg,
@@ -389,34 +396,39 @@ func NewCrud(prefix, table string, db *gom.DB, transferMap map[string]string, fi
 	}
 	return crud, nil
 }
+
 func RequestToQueryParamsTransfer(tableName string, transferMap map[string]string, columnMap map[string]define.ColumnInfo) ParseRequestFunc {
-	//  从request中
-	return func(c *gin.Context) (any, error) {
+	return func(c *fiber.Ctx) (any, error) {
 		queryParams := QueryParams{}
 		queryParams.Table = tableName
+
 		// 从Request的Query生成一个Map
-		for k, v := range c.Request.URL.Query() {
+		c.Request().URI().QueryArgs().VisitAll(func(key, value []byte) {
+			k := string(key)
+			v := string(value)
+
 			if k == "page" {
-				page, err := strconv.Atoi(v[0])
+				page, err := strconv.Atoi(v)
 				if err != nil {
-					return nil, err
+					return
 				}
 				if page < 1 {
 					page = 1
 				}
 				queryParams.Page = page
 			} else if k == "pageSize" {
-				pageSize, err := strconv.Atoi(v[0])
+				pageSize, err := strconv.Atoi(v)
 				if err != nil {
-					return nil, err
+					return
 				}
 				if pageSize < 1 {
 					pageSize = 10
 				}
 				queryParams.PageSize = pageSize
 			} else if k == "orderBy" {
+				values := strings.Split(v, ",")
 				vv := make([]string, 0)
-				for _, vi := range v {
+				for _, vi := range values {
 					if vk, ok := transferMap[vi]; ok {
 						vv = append(vv, vk)
 					} else {
@@ -425,8 +437,9 @@ func RequestToQueryParamsTransfer(tableName string, transferMap map[string]strin
 				}
 				queryParams.OrderBy = vv
 			} else if k == "orderByDesc" {
+				values := strings.Split(v, ",")
 				vv := make([]string, 0)
-				for _, vi := range v {
+				for _, vi := range values {
 					if vk, ok := transferMap[vi]; ok {
 						vv = append(vv, vk)
 					} else {
@@ -442,23 +455,25 @@ func RequestToQueryParamsTransfer(tableName string, transferMap map[string]strin
 				}
 				column, ok := columnMap[key]
 				if !ok {
-					return nil, fmt.Errorf("column %s not found", key)
+					return
 				}
-				values, err := QueryValuesToValues(op, v, column)
+				values := strings.Split(v, ",")
+				val, err := QueryValuesToValues(op, values, column)
 				if err != nil {
-					return nil, err
+					return
 				}
 				queryParams.ConditionParams = append(queryParams.ConditionParams, ConditionParam{
 					Key:    key,
 					Op:     op,
-					Values: values,
+					Values: val,
 				})
 			}
-		}
+		})
 
 		return queryParams, nil
 	}
 }
+
 func QueryValuesToValues(op define.OpType, values []string, column define.ColumnInfo) (any, error) {
 	//将values转换为[]any
 	var err error

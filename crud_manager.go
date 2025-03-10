@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"github.com/kmlixh/gom/v4"
 	"github.com/kmlixh/gom/v4/define"
 )
@@ -100,42 +100,35 @@ func (cm *CrudManager) init() error {
 }
 
 // 注册统一路由
-func (cm *CrudManager) RegisterRoutes(r *gin.RouterGroup) {
-	r.Any("/:table/:operation", cm.handle)
+func (cm *CrudManager) RegisterRoutes(r fiber.Router) {
+	r.All("/:table/:operation", cm.handle)
 }
-func (cm *CrudManager) handle(c *gin.Context) {
-	table := c.Param("table")
-	operation := c.Param("operation")
+
+func (cm *CrudManager) handle(c *fiber.Ctx) error {
+	table := c.Params("table")
+	operation := c.Params("operation")
 	instance, ok := cm.getCrudInstance(table)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "table not configured"})
-		c.Abort()
-		return
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "table not configured"})
 	}
 
 	requestHandler, ok := instance.HandlerMap[operation]
 	if !ok || requestHandler == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "operation not configured"})
-		c.Abort()
-		return
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "operation not configured"})
 	}
-	if c.Request.Method != requestHandler.Method {
-		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed"})
-		c.Abort()
-		return
+	if c.Method() != requestHandler.Method {
+		return c.Status(http.StatusMethodNotAllowed).JSON(fiber.Map{"error": "method not allowed"})
 	}
 	if requestHandler.PreHandle != nil {
-		requestHandler.PreHandle(c)
+		if err := requestHandler.PreHandle(c); err != nil {
+			return err
+		}
 	}
-	if c.IsAborted() {
-		return
-	}
-	requestHandler.Handle(c)
+	return requestHandler.Handle(c)
 }
 
 // 通用请求处理
 func (cm *CrudManager) getCrudInstance(tableName string) (*Crud, bool) {
-
 	cm.mu.RLock()
 	instance, exists := cm.tables[tableName]
 	cm.mu.RUnlock()

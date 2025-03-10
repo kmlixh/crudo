@@ -1,6 +1,6 @@
 # CRUDO - A Flexible CRUD Framework for Go
 
-CRUDO is a powerful and flexible CRUD (Create, Read, Update, Delete, Operations) framework for Go, built on top of the Gin web framework and GOM database library. It provides a simple yet powerful way to create RESTful APIs with minimal boilerplate code.
+CRUDO is a powerful and flexible CRUD (Create, Read, Update, Delete, Operations) framework for Go, built on top of the Fiber web framework and GOM database library. It provides a simple yet powerful way to create RESTful APIs with minimal boilerplate code.
 
 ## Features
 
@@ -15,7 +15,7 @@ CRUDO is a powerful and flexible CRUD (Create, Read, Update, Delete, Operations)
 ## Installation
 
 ```bash
-go get github.com/kmlixh/crudo
+go get github.com/lixinghua5540/crudo
 ```
 
 ## Quick Start
@@ -24,7 +24,7 @@ go get github.com/kmlixh/crudo
 package main
 
 import (
-    "github.com/gin-gonic/gin"
+    "github.com/gofiber/fiber/v2"
     "github.com/kmlixh/crudo"
     "github.com/kmlixh/gom/v4"
 )
@@ -56,10 +56,10 @@ func main() {
         panic(err)
     }
 
-    // Setup Gin router
-    router := gin.Default()
-    crud.RegisterRoutes(router.Group("/api"))
-    router.Run(":8080")
+    // Setup Fiber app
+    app := fiber.New()
+    crud.RegisterRoutes(app.Group("/api"))
+    app.Listen(":8080")
 }
 ```
 

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
@@ -75,64 +75,48 @@ func (s *RedisTokenStore) GetTokensOfUser(userId string, userType string) []stri
 }
 
 // TokenMiddleware 创建一个基于token的中间件
-func TokenMiddleware(tokenKey string, tokenExpire time.Duration, tokenSecret string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		token := c.GetHeader(tokenKey)
+func TokenMiddleware(tokenKey string, tokenExpire time.Duration, tokenSecret string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		token := c.Get(tokenKey)
 		if token == "" {
-			RenderJson(c, 401, "token is empty", nil)
-			c.Abort()
-			return
+			return RenderJson(c, 401, "token is empty", nil)
 		}
 		claims, err := ParseToken(token, tokenSecret)
 		if err != nil {
-			RenderJson(c, 401, err.Error(), nil)
-			c.Abort()
-			return
+			return RenderJson(c, 401, err.Error(), nil)
 		}
 		if claims.ExpiresAt < time.Now().Unix() {
-			RenderJson(c, 401, "token expired", nil)
-			c.Abort()
-			return
+			return RenderJson(c, 401, "token expired", nil)
 		}
-		c.Set("claims", claims)
-		c.Next()
+		c.Locals("claims", claims)
+		return c.Next()
 	}
 }
 
 // TokenMiddlewareWithRedis 创建一个基于Redis的token中间件
-func TokenMiddlewareWithRedis(tokenKey string, tokenExpire time.Duration, tokenSecret string, redisClient *redis.Client) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		token := c.GetHeader(tokenKey)
+func TokenMiddlewareWithRedis(tokenKey string, tokenExpire time.Duration, tokenSecret string, redisClient *redis.Client) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		token := c.Get(tokenKey)
 		if token == "" {
-			RenderJson(c, 401, "token is empty", nil)
-			c.Abort()
-			return
+			return RenderJson(c, 401, "token is empty", nil)
 		}
 		claims, err := ParseToken(token, tokenSecret)
 		if err != nil {
-			RenderJson(c, 401, err.Error(), nil)
-			c.Abort()
-			return
+			return RenderJson(c, 401, err.Error(), nil)
 		}
 		if claims.ExpiresAt < time.Now().Unix() {
-			RenderJson(c, 401, "token expired", nil)
-			c.Abort()
-			return
+			return RenderJson(c, 401, "token expired", nil)
 		}
 		// 从redis中获取token
-		val, err := redisClient.Get(c, token).Result()
+		val, err := redisClient.Get(c.Context(), token).Result()
 		if err != nil {
-			RenderJson(c, 401, "token not found", nil)
-			c.Abort()
-			return
+			return RenderJson(c, 401, "token not found", nil)
 		}
 		if val != claims.Subject {
-			RenderJson(c, 401, "token invalid", nil)
-			c.Abort()
-			return
+			return RenderJson(c, 401, "token invalid", nil)
 		}
-		c.Set("claims", claims)
-		c.Next()
+		c.Locals("claims", claims)
+		return c.Next()
 	}
 }
 
@@ -167,21 +151,17 @@ func CheckToken(token string) bool {
 	return err == nil
 }
 
-func CheckTokenGin(c *gin.Context) {
-	token := c.GetHeader("token")
+func CheckTokenFiber(c *fiber.Ctx) error {
+	token := c.Get("token")
 	if token == "" {
-		RenderJson(c, 401, "unauthorized", nil)
-		c.Abort()
-		return
+		return RenderJson(c, 401, "unauthorized", nil)
 	}
 	userId, _, err := store.GetToken(token)
 	if err != nil || userId == "" {
-		RenderJson(c, 401, "unauthorized", nil)
-		c.Abort()
-		return
+		return RenderJson(c, 401, "unauthorized", nil)
 	}
-	c.Set("userId", userId)
-	c.Next()
+	c.Locals("userId", userId)
+	return c.Next()
 }
 
 func GetTokensOfUser(userId string, userType string) []string {
