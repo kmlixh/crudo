@@ -62,15 +62,16 @@ type ICrud interface {
 }
 
 type Crud struct {
-	Prefix        string
-	Table         string
-	Db            *gom.DB
-	TransferMap   map[string]string
-	FieldOfList   []string
-	FieldOfDetail []string
-	HandlerMap    map[string]*RequestHandler
-	queryBuilder  *QueryBuilder
-	mu            sync.RWMutex
+	Prefix         string
+	Table          string
+	Db             *gom.DB
+	TransferMap    map[string]string
+	FieldOfList    []string
+	FieldOfDetail  []string
+	HandlerMap     map[string]*RequestHandler
+	handlerFilters []string
+	queryBuilder   *QueryBuilder
+	mu             sync.RWMutex
 }
 
 type QueryBuilder struct {
@@ -161,7 +162,8 @@ func (c *Crud) InitDefaultHandler() error {
 		columnMap[col.Name] = col
 	}
 
-	c.HandlerMap = map[string]*RequestHandler{
+	// 定义所有可能的处理器映射
+	allHandlers := map[string]*RequestHandler{
 		PathSave: {
 			Method:             http.MethodPost,
 			ParseRequestFunc:   c.requestToMap(),
@@ -197,6 +199,23 @@ func (c *Crud) InitDefaultHandler() error {
 			RenderResponseFunc: renderJSON,
 		},
 	}
+
+	// 初始化 HandlerMap
+	c.HandlerMap = make(map[string]*RequestHandler)
+
+	// 如果没有指定过滤器，添加所有处理器
+	if len(c.handlerFilters) == 0 {
+		c.HandlerMap = allHandlers
+		return nil
+	}
+
+	// 只添加指定的处理器
+	for _, path := range c.handlerFilters {
+		if handler, exists := allHandlers[path]; exists {
+			c.HandlerMap[path] = handler
+		}
+	}
+
 	return nil
 }
 
@@ -381,15 +400,16 @@ func renderJSON(ctx *fiber.Ctx, data any, err error) error {
 }
 
 // 使用示例
-func NewCrud(prefix, table string, db *gom.DB, transferMap map[string]string, fieldOfList []string, fieldOfDetail []string) (*Crud, error) {
+func NewCrud(prefix, table string, db *gom.DB, transferMap map[string]string, fieldOfList []string, fieldOfDetail []string, handlerFilters []string) (*Crud, error) {
 	crud := &Crud{
-		Prefix:        prefix,
-		Table:         table,
-		Db:            db,
-		TransferMap:   transferMap,
-		FieldOfList:   fieldOfList,
-		FieldOfDetail: fieldOfDetail,
-		queryBuilder:  NewQueryBuilder(db, table),
+		Prefix:         prefix,
+		Table:          table,
+		Db:             db,
+		TransferMap:    transferMap,
+		FieldOfList:    fieldOfList,
+		FieldOfDetail:  fieldOfDetail,
+		handlerFilters: handlerFilters,
+		queryBuilder:   NewQueryBuilder(db, table),
 	}
 	if err := crud.InitDefaultHandler(); err != nil {
 		return nil, err

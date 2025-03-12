@@ -21,12 +21,13 @@ type DatabaseConfig struct {
 }
 
 type TableConfig struct {
-	Name         string            `yaml:"name"`
-	Database     string            `yaml:"database"`
-	PathPrefix   string            `yaml:"path_prefix"`
-	FieldMap     map[string]string `yaml:"field_map"`
-	ListFields   []string          `yaml:"list_fields"`
-	DetailFields []string          `yaml:"detail_fields"`
+	Name           string            `yaml:"name"`
+	Database       string            `yaml:"database"`
+	PathPrefix     string            `yaml:"path_prefix"`
+	FieldMap       map[string]string `yaml:"field_map"`
+	ListFields     []string          `yaml:"list_fields"`
+	DetailFields   []string          `yaml:"detail_fields"`
+	HandlerFilters []string          `yaml:"handler_filters"`
 }
 
 type ServiceConfig struct {
@@ -90,7 +91,7 @@ func (cm *CrudManager) init() error {
 			revMap[v] = k
 		}
 
-		crud, err := NewCrud(tblConf.PathPrefix, tblConf.Name, db, revMap, tblConf.ListFields, tblConf.DetailFields)
+		crud, err := NewCrud(tblConf.PathPrefix, tblConf.Name, db, revMap, tblConf.ListFields, tblConf.DetailFields, tblConf.HandlerFilters)
 		if err != nil {
 			return fmt.Errorf("failed to create crud for %s: %v", tblConf.Name, err)
 		}

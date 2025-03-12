@@ -52,6 +52,7 @@ func setupRouter() (*fiber.App, *Crud) {
 		},
 		nil,
 		nil,
+		nil,
 	)
 
 	// 初始化Fiber路由

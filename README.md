@@ -1,24 +1,24 @@
-# CRUDO - A Flexible CRUD Framework for Go
+# CRUDO - 一个灵活的 Go 语言 CRUD 框架
 
-CRUDO is a powerful and flexible CRUD (Create, Read, Update, Delete, Operations) framework for Go, built on top of the Fiber web framework and GOM database library. It provides a simple yet powerful way to create RESTful APIs with minimal boilerplate code.
+CRUDO 是一个基于 Fiber web 框架和 GOM 数据库库构建的强大而灵活的 CRUD（创建、读取、更新、删除、操作）框架。它提供了一种简单而强大的方式来创建 RESTful API，并且几乎不需要编写样板代码。
 
-## Features
+## 主要特性
 
-- Automatic CRUD endpoint generation
-- Field mapping between API and database
-- Flexible query operations
-- Pagination support
-- Custom field selection for list and detail views
-- Automatic type conversion
-- Table information retrieval
+- 自动生成 CRUD 接口端点
+- API 和数据库之间的字段映射
+- 灵活的查询操作
+- 分页支持
+- 列表和详情视图的自定义字段选择
+- 自动类型转换
+- 表信息检索
 
-## Installation
+## 安装
 
 ```bash
 go get github.com/lixinghua5540/crudo
 ```
 
-## Quick Start
+## 快速开始
 
 ```go
 package main
@@ -30,130 +30,98 @@ import (
 )
 
 func main() {
-    // Initialize database connection
+    // 初始化数据库连接
     db, err := gom.Open("postgres", "host=localhost user=postgres password=password dbname=mydb port=5432 sslmode=disable")
     if err != nil {
         panic(err)
     }
     defer db.Close()
 
-    // Create field mapping
+    // 创建字段映射
     transferMap := map[string]string{
         "apiField1": "db_field1",
         "apiField2": "db_field2",
     }
 
-    // Initialize CRUD instance
+    // 初始化 CRUD 实例
     crud, err := crudo.NewCrud(
-        "/data",           // API prefix
-        "my_table",       // Table name
-        db,               // Database instance
-        transferMap,      // Field mapping
-        nil,             // Fields to show in list view
-        nil,             // Fields to show in detail view
+        "/data",           // API 前缀
+        "my_table",       // 表名
+        db,               // 数据库实例
+        transferMap,      // 字段映射
+        nil,             // 列表视图显示的字段
+        nil,             // 详情视图显示的字段
     )
     if err != nil {
         panic(err)
     }
 
-    // Setup Fiber app
+    // 设置 Fiber 应用
     app := fiber.New()
     crud.RegisterRoutes(app.Group("/api"))
     app.Listen(":8080")
 }
 ```
 
-## API Endpoints
+## API 端点
 
-The framework automatically generates the following endpoints:
+框架自动生成以下端点：
 
-### 1. Create/Update Record (POST /api/data/save)
+### 1. 创建/更新记录 (POST /api/data/save)
+- 支持创建新记录和更新现有记录
+- 通过 JSON 格式提交数据
 
-```bash
-# Create new record
-curl -X POST http://localhost:8080/api/data/save \
-  -H "Content-Type: application/json" \
-  -d '{"apiField1": "value1", "apiField2": 100}'
+### 2. 获取单条记录 (GET /api/data/get)
+- 支持通过 ID 获取记录
+- 支持条件查询
 
-# Update existing record
-curl -X POST http://localhost:8080/api/data/save \
-  -H "Content-Type: application/json" \
-  -d '{"id": 1, "apiField1": "updated_value"}'
-```
+### 3. 获取记录列表 (GET /api/data/list)
+- 支持分页
+- 支持排序
+- 支持多种过滤条件
 
-### 2. Get Single Record (GET /api/data/get)
+### 4. 删除记录 (DELETE /api/data/delete)
+- 支持通过 ID 删除记录
 
-```bash
-# Get record by ID
-curl http://localhost:8080/api/data/get?id=1
+### 5. 获取表信息 (GET /api/data/table)
+- 获取数据表结构信息
 
-# Get record with conditions
-curl http://localhost:8080/api/data/get?apiField1_eq=value1
-```
+## 查询操作
 
-### 3. List Records (GET /api/data/list)
+框架支持多种查询操作：
 
-```bash
-# Basic pagination
-curl http://localhost:8080/api/data/list?page=1&pageSize=10
-
-# With sorting
-curl http://localhost:8080/api/data/list?orderBy=apiField1&orderByDesc=apiField2
-
-# With filters
-curl http://localhost:8080/api/data/list?apiField1_like=value%&apiField2_gt=50
-```
-
-### 4. Delete Record (DELETE /api/data/delete)
-
-```bash
-# Delete by ID
-curl -X DELETE http://localhost:8080/api/data/delete?id=1
-```
-
-### 5. Get Table Information (GET /api/data/table)
-
-```bash
-# Get table structure
-curl http://localhost:8080/api/data/table
-```
-
-## Query Operations
-
-The framework supports various query operations:
-
-| Operation | URL Parameter Format | Example |
+| 操作 | URL 参数格式 | 示例 |
 |-----------|---------------------|---------|
-| Equal | field_eq | ?name_eq=John |
-| Not Equal | field_ne | ?age_ne=25 |
-| Greater Than | field_gt | ?age_gt=18 |
-| Greater Equal | field_ge | ?age_ge=21 |
-| Less Than | field_lt | ?price_lt=100 |
-| Less Equal | field_le | ?price_le=50 |
-| In | field_in | ?status_in=active,pending |
-| Not In | field_notIn | ?status_notIn=deleted,archived |
-| Is Null | field_isNull | ?deletedAt_isNull=true |
-| Is Not Null | field_isNotNull | ?email_isNotNull=true |
-| Between | field_between | ?age_between=18,30 |
-| Not Between | field_notBetween | ?price_notBetween=100,200 |
-| Like | field_like | ?name_like=%John% |
-| Not Like | field_notLike | ?name_notLike=%test% |
+| 等于 | field_eq | ?name_eq=John |
+| 不等于 | field_ne | ?age_ne=25 |
+| 大于 | field_gt | ?age_gt=18 |
+| 大于等于 | field_ge | ?age_ge=21 |
+| 小于 | field_lt | ?price_lt=100 |
+| 小于等于 | field_le | ?price_le=50 |
+| 在列表中 | field_in | ?status_in=active,pending |
+| 不在列表中 | field_notIn | ?status_notIn=deleted,archived |
+| 为空 | field_isNull | ?deletedAt_isNull=true |
+| 不为空 | field_isNotNull | ?email_isNotNull=true |
+| 介于 | field_between | ?age_between=18,30 |
+| 不介于 | field_notBetween | ?price_notBetween=100,200 |
+| 模糊匹配 | field_like | ?name_like=%John% |
+| 不匹配 | field_notLike | ?name_notLike=%test% |
 
-## Field Mapping
+## 字段映射
 
-Field mapping allows you to use different field names in your API compared to your database:
+可以为 API 和数据库使用不同的字段名：
 
 ```go
 transferMap := map[string]string{
-    "userName": "user_name",     // API field : Database field
+    "userName": "user_name",     // API 字段 : 数据库字段
     "userAge": "age",
     "userEmail": "email_address"
 }
 ```
 
-## Custom Field Selection
+## 自定义字段选择
 
-You can specify which fields to include in list and detail views:
+可以指定列表和详情视图中显示的字段：
 
 ```go
 crud, err := crudo.NewCrud(
@@ -161,26 +129,26 @@ crud, err := crudo.NewCrud(
     "users",
     db,
     transferMap,
-    []string{"id", "user_name", "age"},     // Fields for list view
-    []string{"id", "user_name", "age", "email_address", "created_at"},  // Fields for detail view
+    []string{"id", "user_name", "age"},     // 列表视图字段
+    []string{"id", "user_name", "age", "email_address", "created_at"},  // 详情视图字段
 )
 ```
 
-## Response Format
+## 响应格式
 
-All endpoints return responses in the following format:
+所有端点返回统一的响应格式：
 
 ```json
 {
-    "code": 200,           // Status code (200 for success, 500 for error)
-    "message": "success",  // Status message
-    "data": {             // Response data
-        // ... response data here
+    "code": 200,           // 状态码（200 表示成功，500 表示错误）
+    "message": "success",  // 状态信息
+    "data": {             // 响应数据
+        // ... 具体数据
     }
 }
 ```
 
-For paginated responses:
+分页响应格式：
 
 ```json
 {
@@ -191,15 +159,15 @@ For paginated responses:
         "PageSize": 10,
         "Total": 100,
         "List": [
-            // ... array of records
+            // ... 记录数组
         ]
     }
 }
 ```
 
-## Error Handling
+## 错误处理
 
-The framework automatically handles common errors and returns appropriate error messages:
+框架自动处理常见错误并返回适当的错误信息：
 
 ```json
 {
@@ -209,10 +177,10 @@ The framework automatically handles common errors and returns appropriate error 
 }
 ```
 
-## Contributing
+## 贡献
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+欢迎提交 Pull Request 来贡献代码！
 
-## License
+## 许可证
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+本项目采用 MIT 许可证 - 详见 LICENSE 文件 
