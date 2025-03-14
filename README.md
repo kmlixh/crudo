@@ -76,7 +76,7 @@ package main
 
 import (
     "github.com/gofiber/fiber/v2"
-    "github.com/lixinghua5540/crudo"
+    "github.com/kmlixh/crudo"
 )
 
 func main() {
@@ -146,21 +146,207 @@ func main() {
 - 创建示例: `POST /api/data/save` 带 JSON 数据 `{"apiField1": "value", "apiField2": 123}`
 - 更新示例: `POST /api/data/save` 带 JSON 数据 `{"id": 1, "apiField1": "new value"}`
 
+**请求示例（创建新记录）：**
+```bash
+curl -X POST http://localhost:8080/api/data/save \
+  -H "Content-Type: application/json" \
+  -d '{"userName": "张三", "userAge": 28, "userEmail": "zhangsan@example.com"}'
+```
+
+**响应示例：**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "userName": "张三",
+    "userAge": 28,
+    "userEmail": "zhangsan@example.com"
+  }
+}
+```
+
+**请求示例（更新记录）：**
+```bash
+curl -X POST http://localhost:8080/api/data/save \
+  -H "Content-Type: application/json" \
+  -d '{"id": 1, "userName": "张三", "userAge": 29}'
+```
+
+**响应示例：**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "userName": "张三",
+    "userAge": 29,
+    "userEmail": "zhangsan@example.com"
+  }
+}
+```
+
 ### 2. 获取单条记录 (GET /api/data/get)
 - 支持通过 ID 获取记录: `GET /api/data/get?id=1`
 - 支持条件查询: `GET /api/data/get?name_eq=John&age_gt=18`
+
+**请求示例（通过 ID 获取）：**
+```bash
+curl -X GET http://localhost:8080/api/data/get?id=1
+```
+
+**响应示例：**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "userName": "张三",
+    "userAge": 29,
+    "userEmail": "zhangsan@example.com"
+  }
+}
+```
+
+**请求示例（条件查询）：**
+```bash
+curl -X GET "http://localhost:8080/api/data/get?userName_eq=张三&userAge_gt=25"
+```
+
+**响应示例：**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "userName": "张三",
+    "userAge": 29,
+    "userEmail": "zhangsan@example.com"
+  }
+}
+```
 
 ### 3. 获取记录列表 (GET /api/data/list)
 - 支持分页: `GET /api/data/list?page=1&pageSize=10`
 - 支持排序: `GET /api/data/list?orderBy=name&orderByDesc=age`
 - 支持多种过滤条件: `GET /api/data/list?status_in=active,pending&age_between=18,30`
 
+**请求示例（基本分页）：**
+```bash
+curl -X GET "http://localhost:8080/api/data/list?page=1&pageSize=10"
+```
+
+**请求示例（带排序和过滤）：**
+```bash
+curl -X GET "http://localhost:8080/api/data/list?page=1&pageSize=10&orderBy=userName&userAge_between=20,30"
+```
+
+**响应示例：**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "Page": 1,
+    "PageSize": 10,
+    "Total": 25,
+    "List": [
+      {
+        "id": 1,
+        "userName": "张三",
+        "userAge": 29
+      },
+      {
+        "id": 2,
+        "userName": "李四",
+        "userAge": 25
+      },
+      // ... 更多记录
+    ]
+  }
+}
+```
+
 ### 4. 删除记录 (DELETE /api/data/delete)
 - 支持通过 ID 删除记录: `DELETE /api/data/delete?id=1`
 - 支持条件删除: `DELETE /api/data/delete?status_eq=inactive`
 
+**请求示例（通过 ID 删除）：**
+```bash
+curl -X DELETE http://localhost:8080/api/data/delete?id=1
+```
+
+**请求示例（条件删除）：**
+```bash
+curl -X DELETE "http://localhost:8080/api/data/delete?userAge_lt=18"
+```
+
+**响应示例：**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "RowsAffected": 1
+  }
+}
+```
+
 ### 5. 获取表信息 (GET /api/data/table)
 - 获取数据表结构信息: `GET /api/data/table`
+
+**请求示例：**
+```bash
+curl -X GET http://localhost:8080/api/data/table
+```
+
+**响应示例：**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "TableName": "users",
+    "Comment": "用户表",
+    "PrimaryKey": ["id"],
+    "PrimaryKeyAuto": ["id"],
+    "Columns": [
+      {
+        "Name": "id",
+        "Type": "int64",
+        "Comment": "主键ID",
+        "IsKey": true,
+        "IsAuto": true
+      },
+      {
+        "Name": "user_name",
+        "Type": "string",
+        "Comment": "用户名",
+        "IsKey": false,
+        "IsAuto": false
+      },
+      {
+        "Name": "age",
+        "Type": "int32",
+        "Comment": "年龄",
+        "IsKey": false,
+        "IsAuto": false
+      },
+      {
+        "Name": "email",
+        "Type": "string",
+        "Comment": "邮箱",
+        "IsKey": false,
+        "IsAuto": false
+      }
+    ]
+  }
+}
+```
 
 ## 使用 CrudManager 的统一路由
 
@@ -172,6 +358,18 @@ func main() {
   - POST `/api/users/save` - 保存用户信息
   - GET `/api/products/get?id=1` - 获取产品详情
   - DELETE `/api/products/delete?id=1` - 删除产品
+
+**请求示例（获取用户列表）：**
+```bash
+curl -X GET "http://localhost:8080/api/users/list?page=1&pageSize=10"
+```
+
+**请求示例（保存产品信息）：**
+```bash
+curl -X POST http://localhost:8080/api/products/save \
+  -H "Content-Type: application/json" \
+  -d '{"productName": "智能手机", "productPrice": 3999.99}'
+```
 
 ## 查询操作
 
@@ -194,6 +392,18 @@ func main() {
 | 模糊匹配 | field_like | ?name_like=%John% |
 | 不匹配 | field_notLike | ?name_notLike=%test% |
 
+**复杂查询示例：**
+```bash
+# 查询年龄在20-30之间且状态为活跃或待定的用户
+curl -X GET "http://localhost:8080/api/users/list?userAge_between=20,30&status_in=active,pending&orderBy=userName"
+```
+
+**组合多个条件：**
+```bash
+# 查询名称包含"智能"且价格大于1000的产品
+curl -X GET "http://localhost:8080/api/products/list?productName_like=%智能%&productPrice_gt=1000"
+```
+
 ## 字段映射
 
 可以为 API 和数据库使用不同的字段名：
@@ -210,6 +420,26 @@ transferMap := map[string]string{
 1. 当客户端发送请求时，API 字段名会自动转换为数据库字段名
 2. 当服务器返回响应时，数据库字段名会自动转换为 API 字段名
 3. 未映射的字段将保持原样
+
+**映射前的数据库记录：**
+```json
+{
+  "id": 1,
+  "user_name": "张三",
+  "age": 29,
+  "email_address": "zhangsan@example.com"
+}
+```
+
+**映射后的 API 响应：**
+```json
+{
+  "id": 1,
+  "userName": "张三",
+  "userAge": 29,
+  "userEmail": "zhangsan@example.com"
+}
+```
 
 ## 自定义字段选择
 
@@ -231,6 +461,42 @@ crud, err := crudo.NewCrud(
 1. `FieldOfList`: 控制 list 接口返回的字段，适用于列表页面，通常只返回必要的字段
 2. `FieldOfDetail`: 控制 get 接口返回的字段，适用于详情页面，通常返回更完整的信息
 3. 如果不指定（传入 nil），则返回表中的所有字段
+
+**列表视图响应示例（只包含指定字段）：**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "Page": 1,
+    "PageSize": 10,
+    "Total": 25,
+    "List": [
+      {
+        "id": 1,
+        "userName": "张三",
+        "userAge": 29
+      },
+      // ... 更多记录
+    ]
+  }
+}
+```
+
+**详情视图响应示例（包含更多字段）：**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "userName": "张三",
+    "userAge": 29,
+    "userEmail": "zhangsan@example.com",
+    "created_at": "2023-01-01T12:00:00Z"
+  }
+}
+```
 
 ## 处理器过滤
 
@@ -254,6 +520,21 @@ crud, err := crudo.NewCrud(
 2. 创建只写的 API 端点（只启用 save）
 3. 根据权限控制可用的操作
 4. 优化性能，只初始化需要的处理器
+
+**尝试访问未启用的操作示例：**
+```bash
+# 如果只启用了 save 和 get 操作，尝试访问 list 操作
+curl -X GET "http://localhost:8080/api/data/list"
+```
+
+**响应示例（操作不存在）：**
+```json
+{
+  "code": 500,
+  "message": "operation not configured",
+  "data": {}
+}
+```
 
 ## 响应格式
 
@@ -304,6 +585,35 @@ crud, err := crudo.NewCrud(
 3. 参数验证错误
 4. 操作不存在错误
 5. 请求方法错误
+
+**错误示例（记录未找到）：**
+```bash
+curl -X GET "http://localhost:8080/api/data/get?id=999"
+```
+
+**响应：**
+```json
+{
+  "code": 500,
+  "message": "record not found",
+  "data": {}
+}
+```
+
+**错误示例（请求方法错误）：**
+```bash
+# 使用 GET 方法调用需要 POST 的接口
+curl -X GET "http://localhost:8080/api/data/save"
+```
+
+**响应：**
+```json
+{
+  "code": 500,
+  "message": "method not allowed",
+  "data": {}
+}
+```
 
 ## CrudManager 高级功能
 
@@ -380,7 +690,7 @@ import (
     "log"
 
     "github.com/gofiber/fiber/v2"
-    "github.com/lixinghua5540/crudo"
+    "github.com/kmlixh/crudo"
     "github.com/kmlixh/gom/v4"
     _ "github.com/kmlixh/gom/v4/factory/postgres" // 导入数据库驱动
 )
@@ -447,7 +757,7 @@ import (
     "github.com/gofiber/fiber/v2"
     "github.com/gofiber/fiber/v2/middleware/logger"
     "github.com/gofiber/fiber/v2/middleware/recover"
-    "github.com/lixinghua5540/crudo"
+    "github.com/kmlixh/crudo"
     _ "github.com/kmlixh/gom/v4/factory/postgres" // 导入数据库驱动
 )
 
