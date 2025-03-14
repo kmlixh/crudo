@@ -1,4 +1,4 @@
-module github.com/lixinghua5540/crudo
+module github.com/kmlixh/crudo
 
 go 1.22
 
