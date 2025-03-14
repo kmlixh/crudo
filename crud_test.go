@@ -19,7 +19,7 @@ import (
 
 func setupRouter() (*fiber.App, *Crud) {
 	// 初始化内存数据库
-	db, er := gom.Open("postgres", "host=192.168.111.20 user=postgres password=yzy123 dbname=crud_test port=5432 sslmode=disable", &define.DBOptions{Debug: true})
+	db, er := gom.Open("postgres", "host=10.0.1.5 user=postgres password=123456 dbname=crud_test port=5432 sslmode=disable", &define.DBOptions{Debug: true})
 	if er != nil {
 		panic(er)
 	}

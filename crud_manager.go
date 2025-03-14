@@ -8,6 +8,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/kmlixh/gom/v4"
 	"github.com/kmlixh/gom/v4/define"
+	_ "github.com/kmlixh/gom/v4/factory/mysql"
+	_ "github.com/kmlixh/gom/v4/factory/postgres"
 )
 
 // config.go
@@ -18,6 +20,7 @@ type DatabaseConfig struct {
 	User     string `yaml:"user"`
 	Password string `yaml:"password"`
 	Database string `yaml:"database"`
+	Driver   string `yaml:"driver"`
 }
 
 type TableConfig struct {
@@ -35,11 +38,13 @@ type ServiceConfig struct {
 	Tables    []TableConfig    `yaml:"tables"`
 }
 
+// Basic type definitions to fix compilation errors
+
 // crud_manager.go
 type CrudManager struct {
 	config   *ServiceConfig
 	dbs      map[string]*gom.DB
-	tables   map[string]*Crud // key: table name
+	tables   map[string]*Crud
 	tableMap map[string]*define.TableInfo
 	mu       sync.RWMutex
 }
@@ -64,10 +69,27 @@ func (cm *CrudManager) init() error {
 
 	// 初始化数据库连接
 	for _, dbConf := range cm.config.Databases {
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-			dbConf.Host, dbConf.Port, dbConf.User, dbConf.Password, dbConf.Database)
+		var dsn string
+		driver := dbConf.Driver
 
-		db, err := gom.Open("postgres", dsn, &define.DBOptions{Debug: true})
+		// If driver is not specified, default to postgres
+		if driver == "" {
+			driver = "postgres"
+		}
+
+		// Generate DSN based on driver type
+		switch driver {
+		case "mysql":
+			dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+				dbConf.User, dbConf.Password, dbConf.Host, dbConf.Port, dbConf.Database)
+		case "postgres":
+			dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+				dbConf.Host, dbConf.Port, dbConf.User, dbConf.Password, dbConf.Database)
+		default:
+			return fmt.Errorf("unsupported database driver: %s", driver)
+		}
+
+		db, err := gom.Open(driver, dsn, &define.DBOptions{Debug: true})
 		if err != nil {
 			return fmt.Errorf("failed to connect %s: %v", dbConf.Name, err)
 		}
