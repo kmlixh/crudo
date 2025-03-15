@@ -85,6 +85,8 @@ func (cm *CrudManager) init() error {
 		case "postgres":
 			dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 				dbConf.Host, dbConf.Port, dbConf.User, dbConf.Password, dbConf.Database)
+		case "sqlite3":
+			dsn = dbConf.Database
 		default:
 			return fmt.Errorf("unsupported database driver: %s", driver)
 		}

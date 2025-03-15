@@ -1,0 +1,36 @@
+# 测试用配置文件
+
+# 数据库配置
+databases:
+  - name: "test_db"
+    driver: "postgres"
+    host: "10.0.1.5"
+    port: 5432
+    user: "postgres"
+    password: "123456"
+    database: "crud_test"
+
+# 表配置
+tables:
+  - name: "users"
+    database: "test_db"
+    path_prefix: "/users"
+    field_map:
+      id: "id"
+      username: "username"
+      email: "email"
+    list_fields:
+      - "id"
+      - "username"
+      - "email"
+    detail_fields:
+      - "id"
+      - "username"
+      - "email"
+      - "created_at"
+    handler_filters:
+      - "save"
+      - "delete"
+      - "get"
+      - "list"
+      - "table" 

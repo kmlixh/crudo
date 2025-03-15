@@ -194,6 +194,7 @@ func (c *Crud) InitDefaultHandler() error {
 		},
 		PathTable: {
 			Method:             http.MethodGet,
+			ParseRequestFunc:   func(c *fiber.Ctx) (any, error) { return nil, nil },
 			DataOperationFunc:  c.tableOperation(),
 			TransferResultFunc: doNothingTransfer,
 			RenderResponseFunc: renderJSON,
