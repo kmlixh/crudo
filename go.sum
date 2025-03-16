@@ -31,6 +31,8 @@ github.com/klauspost/compress v1.17.9 h1:6KIumPrER1LHsvBVuDa0r5xaG0Es51mhhB9BQB2
 github.com/klauspost/compress v1.17.9/go.mod h1:Di0epgTjJY877eYKx5yC51cX2A2Vl2ibi7bDH9ttBbw=
 github.com/kmlixh/gom/v4 v4.6.2 h1:VLoVuv49nqVZv/2RtKoSojmvkP4mbazuL2bf2/UXKag=
 github.com/kmlixh/gom/v4 v4.6.2/go.mod h1:efQl6y5vvkiOFVmtksLUcOHElPOp503Ttsg7168bTE8=
+github.com/kmlixh/gom/v4 v4.6.3 h1:LvBpOlDyvwP25140j8zI0DJ6M3vZlQZzKbSz2gzUc04=
+github.com/kmlixh/gom/v4 v4.6.3/go.mod h1:efQl6y5vvkiOFVmtksLUcOHElPOp503Ttsg7168bTE8=
 github.com/kr/pretty v0.3.0 h1:WgNl7dwNpEZ6jJ9k1snq4pZsg7DOEN8hP9Xw0Tsjwk0=
 github.com/kr/pretty v0.3.0/go.mod h1:640gp4NfQd8pI5XOwp5fnNeVWj67G7CFk/SaSQn7NBk=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=

@@ -7,7 +7,7 @@ toolchain go1.23.2
 require (
 	github.com/gofiber/fiber/v2 v2.52.6
 	github.com/google/uuid v1.6.0
-	github.com/kmlixh/gom/v4 v4.6.2
+	github.com/kmlixh/gom/v4 v4.6.3
 	github.com/lib/pq v1.10.9
 	github.com/redis/go-redis/v9 v9.7.1
 	github.com/stretchr/testify v1.10.0
