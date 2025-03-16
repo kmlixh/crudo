@@ -59,6 +59,8 @@ type ICrud interface {
 	RemoveHandler(path string)
 	GetHandler(path string) (*RequestHandler, bool)
 	RegisterRoutes(r fiber.Router)
+	GetPrefix() string
+	GetAvailablePaths() []string
 }
 
 type Crud struct {
@@ -68,7 +70,7 @@ type Crud struct {
 	TransferMap    map[string]string
 	FieldOfList    []string
 	FieldOfDetail  []string
-	HandlerMap     map[string]*RequestHandler
+	HandlerMap     map[string]*RequestHandler // key is now full path: prefix + "/" + operation
 	handlerFilters []string
 	queryBuilder   *QueryBuilder
 	mu             sync.RWMutex
@@ -144,73 +146,118 @@ func (h *RequestHandler) Handle(c *fiber.Ctx) error {
 func (c *Crud) RegisterRoutes(r fiber.Router) {
 	for path, handler := range c.HandlerMap {
 		if handler.PreHandle != nil {
-			r.Add(handler.Method, c.Prefix+"/"+path, handler.PreHandle, handler.Handle)
+			r.Add(handler.Method, path, handler.PreHandle, handler.Handle)
 		} else {
-			r.Add(handler.Method, c.Prefix+"/"+path, handler.Handle)
+			r.Add(handler.Method, path, handler.Handle)
 		}
 	}
 }
 
+func (c *Crud) GetAvailablePaths() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	paths := make([]string, 0, len(c.HandlerMap))
+	for path := range c.HandlerMap {
+		paths = append(paths, path)
+	}
+	return paths
+}
+
 func (c *Crud) InitDefaultHandler() error {
-	tableInfo, err := c.Db.GetTableInfo(c.Table)
-	if err != nil {
-		return fmt.Errorf("failed to get table info: %w", err)
-	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	columnMap := make(map[string]define.ColumnInfo)
-	for _, col := range tableInfo.Columns {
-		columnMap[col.Name] = col
-	}
-
-	// 定义所有可能的处理器映射
-	allHandlers := map[string]*RequestHandler{
-		PathSave: {
-			Method:             http.MethodPost,
-			ParseRequestFunc:   c.requestToMap(),
-			DataOperationFunc:  c.saveOperation(),
-			TransferResultFunc: doNothingTransfer,
-			RenderResponseFunc: renderJSON,
-		},
-		PathDelete: {
-			Method:             http.MethodDelete,
-			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, columnMap),
-			DataOperationFunc:  c.deleteOperation(),
-			TransferResultFunc: doNothingTransfer,
-			RenderResponseFunc: renderJSON,
-		},
-		PathGet: {
-			Method:             http.MethodGet,
-			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, columnMap),
-			DataOperationFunc:  c.getOperation(),
-			TransferResultFunc: doNothingTransfer,
-			RenderResponseFunc: renderJSON,
-		},
-		PathList: {
-			Method:             http.MethodGet,
-			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, columnMap),
-			DataOperationFunc:  c.listOperation(),
-			TransferResultFunc: doNothingTransfer,
-			RenderResponseFunc: renderJSON,
-		},
-		PathTable: {
-			Method:             http.MethodGet,
-			ParseRequestFunc:   func(c *fiber.Ctx) (any, error) { return nil, nil },
-			DataOperationFunc:  c.tableOperation(),
-			TransferResultFunc: doNothingTransfer,
-			RenderResponseFunc: renderJSON,
-		},
-	}
-
-	// 初始化 HandlerMap
 	c.HandlerMap = make(map[string]*RequestHandler)
 
-	// 如果没有指定过滤器，添加所有处理器
+	// Define all possible handlers
+	allHandlers := map[string]*RequestHandler{
+		PathSave: {
+			Method:            http.MethodPost,
+			ParseRequestFunc:  c.requestToMap(),
+			DataOperationFunc: c.saveOperation(),
+			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
+				if err != nil {
+					return RenderErrs(ctx, err)
+				}
+				return RenderOk(ctx, data)
+			},
+		},
+		PathDelete: {
+			Method:            http.MethodDelete,
+			ParseRequestFunc:  RequestToQueryParamsTransfer(c.Table, c.TransferMap, c.queryBuilder.columnCache),
+			DataOperationFunc: c.deleteOperation(),
+			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
+				if err != nil {
+					return RenderErrs(ctx, err)
+				}
+				return RenderOk(ctx, data)
+			},
+		},
+		PathGet: {
+			Method:            http.MethodGet,
+			ParseRequestFunc:  RequestToQueryParamsTransfer(c.Table, c.TransferMap, c.queryBuilder.columnCache),
+			DataOperationFunc: c.getOperation(),
+			TransferResultFunc: func(data any) (any, error) {
+				if data == nil {
+					return nil, nil
+				}
+				result, ok := data.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("unexpected data type: %T", data)
+				}
+				return c.transferData(result, true)
+			},
+			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
+				if err != nil {
+					return RenderErrs(ctx, err)
+				}
+				return RenderOk(ctx, data)
+			},
+		},
+		PathList: {
+			Method:            http.MethodGet,
+			ParseRequestFunc:  RequestToQueryParamsTransfer(c.Table, c.TransferMap, c.queryBuilder.columnCache),
+			DataOperationFunc: c.listOperation(),
+			TransferResultFunc: func(data any) (any, error) {
+				if data == nil {
+					return nil, nil
+				}
+				result, ok := data.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("unexpected data type: %T", data)
+				}
+				return result, nil
+			},
+			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
+				if err != nil {
+					return RenderErrs(ctx, err)
+				}
+				return RenderOk(ctx, data)
+			},
+		},
+		PathTable: {
+			Method:            http.MethodGet,
+			ParseRequestFunc:  func(c *fiber.Ctx) (any, error) { return nil, nil },
+			DataOperationFunc: c.tableOperation(),
+			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
+				if err != nil {
+					return RenderErrs(ctx, err)
+				}
+				return RenderOk(ctx, data)
+			},
+		},
+	}
+
+	// If no filters specified, use all handlers
 	if len(c.handlerFilters) == 0 {
-		c.HandlerMap = allHandlers
+		for path, handler := range allHandlers {
+			c.HandlerMap[path] = handler
+		}
 		return nil
 	}
 
-	// 只添加指定的处理器
+	// Only add handlers that are in the filter list
 	for _, path := range c.handlerFilters {
 		if handler, exists := allHandlers[path]; exists {
 			c.HandlerMap[path] = handler
@@ -337,39 +384,55 @@ func (c *Crud) saveOperation() DataOperationFunc {
 
 		// 检查是否是更新操作
 		var isUpdate bool
-		if id, hasID := data["id"]; hasID {
+		var id any
+		if idVal, hasID := data["id"]; hasID {
 			isUpdate = true
-			chain.Where("id", define.OpEq, id)
+			id = idVal
 			delete(data, "id")
 		}
 
 		// 执行保存操作
-		var result *define.Result
 		if isUpdate {
-			result = chain.Values(data).Update()
+			// 更新操作
+			chain.Where("id", define.OpEq, id)
+			result := chain.Values(data).Update()
 			if result.Error != nil {
 				return nil, result.Error
 			}
-			// 对于更新操作，重新查询获取更新后的数据
+			// 重新查询获取更新后的数据
 			queryResult := chain.First()
 			if queryResult.Error != nil {
 				return nil, queryResult.Error
 			}
 			if len(queryResult.Data) == 0 {
-				return nil, errors.New("failed to retrieve saved data")
+				return nil, errors.New("failed to retrieve updated data")
 			}
-			// 转换字段名称并返回
 			return c.transferData(queryResult.Data[0], true)
 		} else {
-			// 对于插入操作，使用 RETURNING * 获取插入的数据
-			result = chain.Values(data).Raw("RETURNING *").Save()
+			// 插入操作
+			columns := make([]string, 0, len(data))
+			values := make([]any, 0, len(data))
+			placeholders := make([]string, 0, len(data))
+			i := 1
+			for k, v := range data {
+				columns = append(columns, k)
+				values = append(values, v)
+				placeholders = append(placeholders, fmt.Sprintf("$%d", i))
+				i++
+			}
+
+			query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) RETURNING *",
+				c.Table,
+				strings.Join(columns, ", "),
+				strings.Join(placeholders, ", "))
+
+			result := chain.Raw(query, values...).Exec()
 			if result.Error != nil {
 				return nil, result.Error
 			}
 			if len(result.Data) == 0 {
-				return nil, errors.New("failed to retrieve saved data")
+				return nil, errors.New("failed to retrieve inserted data")
 			}
-			// 转换字段名称并返回
 			return c.transferData(result.Data[0], true)
 		}
 	}
@@ -412,6 +475,13 @@ func NewCrud(prefix, table string, db *gom.DB, transferMap map[string]string, fi
 		handlerFilters: handlerFilters,
 		queryBuilder:   NewQueryBuilder(db, table),
 	}
+
+	// Cache table column information
+	_, err := crud.queryBuilder.CacheTableInfo()
+	if err != nil {
+		return nil, fmt.Errorf("failed to cache table info: %v", err)
+	}
+
 	if err := crud.InitDefaultHandler(); err != nil {
 		return nil, err
 	}
@@ -782,4 +852,53 @@ func (c *Crud) listOperation() DataOperationFunc {
 			"List":     converted,
 		}, nil
 	}
+}
+
+func (c *Crud) Handle(ctx *fiber.Ctx) error {
+	// 获取请求路径
+	path := ctx.Path()
+
+	// 提取操作部分
+	operation := strings.TrimPrefix(path, c.Prefix)
+	operation = strings.TrimPrefix(operation, "/")
+
+	// 查找对应的处理器
+	c.mu.RLock()
+	handler, exists := c.HandlerMap[operation]
+	c.mu.RUnlock()
+
+	if !exists || handler == nil {
+		return ctx.Status(http.StatusNotFound).JSON(fiber.Map{"error": "operation not configured"})
+	}
+
+	if ctx.Method() != handler.Method {
+		return ctx.Status(http.StatusMethodNotAllowed).JSON(fiber.Map{"error": "method not allowed"})
+	}
+
+	if handler.PreHandle != nil {
+		if err := handler.PreHandle(ctx); err != nil {
+			return err
+		}
+	}
+
+	return handler.Handle(ctx)
+}
+
+func (c *Crud) GetHandler(path string) (*RequestHandler, bool) {
+	c.mu.RLock()
+	operation := strings.TrimPrefix(path, c.Prefix)
+	operation = strings.TrimPrefix(operation, "/")
+	handler, exists := c.HandlerMap[operation]
+	c.mu.RUnlock()
+	return handler, exists
+}
+
+func (c *Crud) RemoveHandler(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.HandlerMap, path)
+}
+
+func (c *Crud) GetPrefix() string {
+	return c.Prefix
 }

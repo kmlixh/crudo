@@ -7,80 +7,124 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/kmlixh/gom/v4"
-	"github.com/kmlixh/gom/v4/define"
 	_ "github.com/kmlixh/gom/v4/factory/postgres"
 	"github.com/stretchr/testify/assert"
 )
 
+// 基础测试数据
+var baseData = map[string]interface{}{
+	"apiField1": "testValue",
+	"apiField2": 100,
+}
+
 func setupRouter() (*fiber.App, *Crud) {
-	// 初始化内存数据库
-	db, er := gom.Open("postgres", "host=10.0.1.5 user=postgres password=123456 dbname=crud_test port=5432 sslmode=disable", &define.DBOptions{Debug: true})
-	if er != nil {
-		panic(er)
+	config := &ServiceConfig{
+		Databases: []DatabaseConfig{
+			{
+				Name:     "test_db",
+				Driver:   "postgres",
+				Host:     testDBHost,
+				Port:     mustParseInt(testDBPort),
+				User:     testDBUser,
+				Password: testDBPassword,
+				Database: testDBName,
+				Options: &DBOptions{
+					Debug: true,
+				},
+			},
+		},
+		Tables: []TableConfig{
+			{
+				Name:       "test_data",
+				Database:   "test_db",
+				PathPrefix: "/data",
+				TransferMap: map[string]string{
+					"apiField1": "field1",
+					"apiField2": "field2",
+				},
+			},
+		},
 	}
 
-	// 清理表
+	// Initialize CrudManager
+	manager, err := NewCrudManager(config)
+	if err != nil {
+		panic(fmt.Errorf("failed to create CrudManager: %v", err))
+	}
+
+	// Initialize the manager
+	if err := manager.init(); err != nil {
+		panic(fmt.Errorf("failed to initialize manager: %v", err))
+	}
+
+	// Create test table
+	db := manager.dbs["test_db"]
+
+	// 清理和创建测试表
+	cleanupTestTable(db)
+	createTestTable(db)
+
+	// Create Fiber app and register routes
+	app := fiber.New()
+	manager.RegisterRoutes(app)
+
+	// Get the crud instance
+	crud, ok := manager.routes["/data"]
+	if !ok {
+		panic("Failed to get CRUD instance for test_data")
+	}
+
+	crudInstance, ok := crud.(*Crud)
+	if !ok {
+		panic("Failed to convert to Crud type")
+	}
+
+	return app, crudInstance
+}
+
+// 辅助函数：清理测试表
+func cleanupTestTable(db *gom.DB) {
 	result := db.Chain().Raw("DROP TABLE IF EXISTS test_data").Exec()
 	if result.Error != nil {
 		panic(fmt.Errorf("failed to drop table: %v", result.Error))
 	}
+}
 
-	// 创建表时使用PostgreSQL语法
-	result = db.Chain().Raw(`
+// 辅助函数：创建测试表
+func createTestTable(db *gom.DB) {
+	result := db.Chain().Raw(`
 		CREATE TABLE IF NOT EXISTS test_data (
-			id BIGSERIAL PRIMARY KEY,
+			id SERIAL PRIMARY KEY,
 			field1 TEXT,
-			field2 INTEGER
+			field2 INTEGER,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`).Exec()
 	if result.Error != nil {
 		panic(fmt.Errorf("failed to create table: %v", result.Error))
 	}
+}
 
-	// 创建CRUD实例
-	crud, _ := NewCrud(
-		"/data",
-		"test_data",
-		db,
-		map[string]string{
-			"apiField1": "field1",
-			"apiField2": "field2",
-		},
-		nil,
-		nil,
-		nil,
-	)
-
-	// 初始化Fiber路由
-	app := fiber.New()
-	crud.RegisterRoutes(app.Group("/api"))
-
-	return app, crud
+// TestMain 用于设置和清理测试环境
+func TestMain(m *testing.M) {
+	// 运行测试并直接退出
+	os.Exit(m.Run())
 }
 
 func TestCRUDIntegration(t *testing.T) {
 	app, crud := setupRouter()
 	defer crud.Db.Close()
 
-	// 测试数据模板
-	baseData := map[string]interface{}{
-		"apiField1": "testValue",
-		"apiField2": 100,
-	}
-
 	t.Run("CreateAndRetrieve", func(t *testing.T) {
 		// Create record
-		createData := map[string]interface{}{
-			"apiField1": "testValue",
-			"apiField2": 100,
-		}
-
-		createBody, _ := json.Marshal(createData)
-		req := httptest.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
+		createBody, _ := json.Marshal(baseData)
+		req := httptest.NewRequest("POST", "/data/save", bytes.NewReader(createBody))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
@@ -90,6 +134,7 @@ func TestCRUDIntegration(t *testing.T) {
 		var createRes CodeMsg
 		err = json.Unmarshal(body, &createRes)
 		assert.NoError(t, err)
+		assert.Equal(t, SuccessCode, createRes.Code)
 		assert.NotNil(t, createRes.Data, "Response data should not be nil")
 
 		responseData, ok := createRes.Data.(map[string]interface{})
@@ -97,22 +142,32 @@ func TestCRUDIntegration(t *testing.T) {
 		assert.NotNil(t, responseData["id"], "Response should contain an ID")
 
 		createdID := int(responseData["id"].(float64))
+		assert.Greater(t, createdID, 0, "Created ID should be greater than 0")
 
 		// 查询记录
-		req = httptest.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(createdID), nil)
+		req = httptest.NewRequest("GET", "/data/get?id="+strconv.Itoa(createdID), nil)
 		resp, err = app.Test(req)
 		assert.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		body, _ = io.ReadAll(resp.Body)
 		var getRes CodeMsg
-		json.Unmarshal(body, &getRes)
-		assert.Equal(t, "testValue", getRes.Data.(map[string]interface{})["apiField1"])
+		err = json.Unmarshal(body, &getRes)
+		assert.NoError(t, err)
+		assert.Equal(t, SuccessCode, getRes.Code)
+		assert.NotNil(t, getRes.Data, "Response data should not be nil")
+
+		getData, ok := getRes.Data.(map[string]interface{})
+		assert.True(t, ok, "Response data should be a map")
+		assert.Equal(t, float64(createdID), getData["id"], "Retrieved ID should match created ID")
+		assert.Equal(t, baseData["apiField1"], getData["apiField1"], "Retrieved apiField1 should match created value")
+		assert.Equal(t, float64(baseData["apiField2"].(int)), getData["apiField2"], "Retrieved apiField2 should match created value")
 	})
 
 	t.Run("UpdateRecord", func(t *testing.T) {
 		// 先创建记录
 		createBody, _ := json.Marshal(baseData)
-		req := httptest.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
+		req := httptest.NewRequest("POST", "/data/save", bytes.NewReader(createBody))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
@@ -137,13 +192,13 @@ func TestCRUDIntegration(t *testing.T) {
 			"apiField1": "updatedValue",
 		}
 		updateBody, _ := json.Marshal(updateData)
-		req = httptest.NewRequest("POST", "/api/data/save", bytes.NewReader(updateBody))
+		req = httptest.NewRequest("POST", "/data/save", bytes.NewReader(updateBody))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err = app.Test(req)
 		assert.NoError(t, err)
 
 		// 验证更新
-		req = httptest.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(createdID), nil)
+		req = httptest.NewRequest("GET", "/data/get?id="+strconv.Itoa(createdID), nil)
 		resp, err = app.Test(req)
 		assert.NoError(t, err)
 
@@ -161,13 +216,13 @@ func TestCRUDIntegration(t *testing.T) {
 				"apiField2": i,
 			}
 			body, _ := json.Marshal(data)
-			req := httptest.NewRequest("POST", "/api/data/save", bytes.NewReader(body))
+			req := httptest.NewRequest("POST", "/data/save", bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			app.Test(req)
 		}
 
 		// 测试分页
-		req := httptest.NewRequest("GET", "/api/data/list?page=2&pageSize=10", nil)
+		req := httptest.NewRequest("GET", "/data/list?page=2&pageSize=10", nil)
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 
@@ -185,7 +240,7 @@ func TestCRUDIntegration(t *testing.T) {
 	t.Run("DeleteRecord", func(t *testing.T) {
 		// 创建测试记录
 		createBody, _ := json.Marshal(baseData)
-		req := httptest.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
+		req := httptest.NewRequest("POST", "/data/save", bytes.NewReader(createBody))
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
@@ -196,13 +251,13 @@ func TestCRUDIntegration(t *testing.T) {
 		createdID := int(createRes.Data.(map[string]interface{})["id"].(float64))
 
 		// 删除记录
-		req = httptest.NewRequest("DELETE", "/api/data/delete?id="+strconv.Itoa(createdID), nil)
+		req = httptest.NewRequest("DELETE", "/data/delete?id="+strconv.Itoa(createdID), nil)
 		resp, err = app.Test(req)
 		assert.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		// 验证删除
-		req = httptest.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(createdID), nil)
+		req = httptest.NewRequest("GET", "/data/get?id="+strconv.Itoa(createdID), nil)
 		resp, err = app.Test(req)
 		assert.NoError(t, err)
 
@@ -225,7 +280,7 @@ func TestFieldMapping(t *testing.T) {
 
 	// 创建记录
 	createBody, _ := json.Marshal(testData)
-	req := httptest.NewRequest("POST", "/api/data/save", bytes.NewReader(createBody))
+	req := httptest.NewRequest("POST", "/data/save", bytes.NewReader(createBody))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
 	assert.NoError(t, err)
@@ -244,7 +299,7 @@ func TestFieldMapping(t *testing.T) {
 	createdID := int(responseData["id"].(float64))
 
 	// 查询记录
-	req = httptest.NewRequest("GET", "/api/data/get?id="+strconv.Itoa(createdID), nil)
+	req = httptest.NewRequest("GET", "/data/get?id="+strconv.Itoa(createdID), nil)
 	resp, err = app.Test(req)
 	assert.NoError(t, err)
 

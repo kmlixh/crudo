@@ -10,6 +10,9 @@ databases:
     password: "123456"
     database: "crud_test"
 
+# API前缀配置
+api_prefix: "/api"
+
 # 表配置
 tables:
   - name: "users"
@@ -29,8 +32,43 @@ tables:
       - "email"
       - "created_at"
     handler_filters:
+      - "table"
+      - "list"
       - "save"
       - "delete"
       - "get"
+  - name: "products"
+    database: "test_db"
+    path_prefix: "/ecommerce/products"
+    field_map:
+      id: "id"
+      name: "name"
+      price: "price"
+    list_fields:
+      - "id"
+      - "name"
+      - "price"
+    detail_fields:
+      - "id"
+      - "name"
+      - "price"
+      - "created_at"
+    handler_filters:
       - "list"
-      - "table" 
+      - "save"
+  - name: "categories"
+    database: "test_db"
+    path_prefix: "/ecommerce/categories"
+    field_map:
+      id: "id"
+      name: "name"
+    list_fields:
+      - "id"
+      - "name"
+    detail_fields:
+      - "id"
+      - "name"
+      - "created_at"
+    handler_filters:
+      - "list"
+      - "get" 
