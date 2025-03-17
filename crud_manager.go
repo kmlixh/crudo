@@ -30,6 +30,7 @@ type DatabaseConfig struct {
 type TableConfig struct {
 	Name           string            `yaml:"name"`
 	Database       string            `yaml:"database"`
+	Table          string            `yaml:"table"`
 	PathPrefix     string            `yaml:"path_prefix"`
 	TransferMap    map[string]string `yaml:"field_map"`
 	FieldOfList    []string          `yaml:"list_fields"`
@@ -131,7 +132,7 @@ func (cm *CrudManager) init() error {
 		fmt.Printf("Creating CRUD instance for table %s...\n", tblConf.Name)
 		crud, err := NewCrud(
 			tblConf.Name,
-			tblConf.Database,
+			tblConf.Table,
 			db,
 			tblConf.TransferMap,
 			tblConf.FieldOfList,
