@@ -4,15 +4,13 @@
 databases:
   - name: "test_db"
     driver: "postgres"
-    host: "10.0.1.5"
+    host: "192.168.111.20"
     port: 5432
     user: "postgres"
-    password: "123456"
+    password: "yzy123"
     database: "crud_test"
 
 # API前缀配置
-api_prefix: "/api"
-
 # 表配置
 tables:
   - name: "users"

@@ -55,19 +55,17 @@ type ServiceConfig struct {
 
 // crud_manager.go
 type CrudManager struct {
-	config   *ServiceConfig
-	dbs      map[string]*gom.DB
-	routes   map[string]ICrud // key is full path for routing
-	tableMap map[string]*define.TableInfo
-	mu       sync.RWMutex
+	config *ServiceConfig
+	dbs    map[string]*gom.DB
+	routes map[string]ICrud // key is full path for routing
+	mu     sync.RWMutex
 }
 
 func NewCrudManager(config *ServiceConfig) (*CrudManager, error) {
 	cm := &CrudManager{
-		config:   config,
-		dbs:      make(map[string]*gom.DB),
-		routes:   make(map[string]ICrud),
-		tableMap: make(map[string]*define.TableInfo),
+		config: config,
+		dbs:    make(map[string]*gom.DB),
+		routes: make(map[string]ICrud),
 	}
 	return cm, nil
 }
@@ -130,13 +128,6 @@ func (cm *CrudManager) init() error {
 			return fmt.Errorf("database not found for table %s: %s", tblConf.Name, tblConf.Database)
 		}
 
-		// 获取表信息并缓存
-		tableInfo, err := db.GetTableInfo(tblConf.Name)
-		if err != nil {
-			return fmt.Errorf("failed to get table info for %s: %v", tblConf.Name, err)
-		}
-		cm.tableMap[tblConf.Name] = tableInfo
-
 		fmt.Printf("Creating CRUD instance for table %s...\n", tblConf.Name)
 		crud, err := NewCrud(
 			tblConf.Name,
@@ -162,20 +153,24 @@ func (cm *CrudManager) init() error {
 // RegisterRoutes 注册统一路由
 func (cm *CrudManager) RegisterRoutes(r fiber.Router) {
 	// 注册所有路由
-	r.All("/:path(*)", cm.handle)
+	r.All("/*", cm.handle)
 }
 
 func (cm *CrudManager) handle(c *fiber.Ctx) error {
-	path := c.Params("path")
+	path := c.Params("*")
 
 	// 找到匹配的 Crud 实例
 	cm.mu.RLock()
 	var matchedCrud ICrud
 	var matchedPrefix string
 	for prefix, crud := range cm.routes {
-		if strings.HasPrefix(path, prefix) {
+		// 确保前缀格式一致
+		tempPrefix := strings.TrimPrefix(prefix, "/")
+
+		// 只有当 tempPrefix 不为空且 path 以 tempPrefix 开头时才匹配
+		if tempPrefix != "" && strings.HasPrefix(path, tempPrefix) {
 			matchedCrud = crud
-			matchedPrefix = prefix
+			matchedPrefix = tempPrefix
 			break
 		}
 	}
@@ -208,28 +203,6 @@ func (cm *CrudManager) handle(c *fiber.Ctx) error {
 	return handler.Handle(c)
 }
 
-// 通用请求处理
-func (cm *CrudManager) getCrudInstance(prefix string) (ICrud, bool) {
-	cm.mu.RLock()
-	instance, exists := cm.routes[prefix]
-	cm.mu.RUnlock()
-
-	if !exists {
-		return nil, false
-	}
-	return instance, true
-}
-
-// 辅助函数检查slice包含
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
-
 // 更新配置（线程安全）
 func (cm *CrudManager) UpdateConfig(newConf *ServiceConfig) error {
 	cm.mu.Lock()
@@ -244,7 +217,6 @@ func (cm *CrudManager) UpdateConfig(newConf *ServiceConfig) error {
 	cm.config = newConf
 	cm.dbs = make(map[string]*gom.DB)
 	cm.routes = make(map[string]ICrud)
-	cm.tableMap = make(map[string]*define.TableInfo)
 	return cm.init()
 }
 

@@ -17,10 +17,10 @@ import (
 
 // 使用与 crud_test.go 相同的测试环境配置
 var (
-	testDBHost     = getEnvOrDefault("TEST_DB_HOST", "10.0.1.5")
+	testDBHost     = getEnvOrDefault("TEST_DB_HOST", "192.168.111.20")
 	testDBPort     = getEnvOrDefault("TEST_DB_PORT", "5432")
 	testDBUser     = getEnvOrDefault("TEST_DB_USER", "postgres")
-	testDBPassword = getEnvOrDefault("TEST_DB_PASSWORD", "123456")
+	testDBPassword = getEnvOrDefault("TEST_DB_PASSWORD", "yzy123")
 	testDBName     = getEnvOrDefault("TEST_DB_NAME", "crud_test")
 )
 
@@ -98,7 +98,8 @@ func TestCrudManagerRouting(t *testing.T) {
 
 	// 创建 Fiber app 用于测试
 	app := fiber.New()
-	manager.RegisterRoutes(app)
+	api := app.Group("/api")
+	manager.RegisterRoutes(api)
 
 	// 测试用例
 	tests := []struct {
@@ -111,50 +112,50 @@ func TestCrudManagerRouting(t *testing.T) {
 		{
 			name:           "Products Save - Valid",
 			method:         "POST",
-			path:           "/ecommerce/products/save",
+			path:           "/api/ecommerce/products/save",
 			body:           `{"name":"Test Product","desc":"Test Description","price":99.99}`,
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Products List - Valid",
 			method:         "GET",
-			path:           "/ecommerce/products/list",
+			path:           "/api/ecommerce/products/list",
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Products Get - Not Configured",
 			method:         "GET",
-			path:           "/ecommerce/products/get",
+			path:           "/api/ecommerce/products/get",
 			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name:           "Categories List - Valid",
 			method:         "GET",
-			path:           "/ecommerce/categories/list",
+			path:           "/api/ecommerce/categories/list",
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Categories Get - Valid",
 			method:         "GET",
-			path:           "/ecommerce/categories/get",
+			path:           "/api/ecommerce/categories/get",
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Categories Save - Not Configured",
 			method:         "POST",
-			path:           "/ecommerce/categories/save",
+			path:           "/api/ecommerce/categories/save",
 			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name:           "Invalid Path",
 			method:         "GET",
-			path:           "/invalid/path",
+			path:           "/api/invalid/path",
 			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name:           "Wrong Method",
 			method:         "POST",
-			path:           "/ecommerce/products/list",
+			path:           "/api/ecommerce/products/list",
 			expectedStatus: http.StatusMethodNotAllowed,
 		},
 	}
@@ -166,17 +167,19 @@ func TestCrudManagerRouting(t *testing.T) {
 				req.Header.Set("Content-Type", "application/json")
 				req = httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body))
 			}
-			resp, err := app.Test(req)
+
+			// 设置测试超时时间，特别是在调试模式下
+			resp, err := app.Test(req, -1) // -1 表示不设置超时限制
 			assert.NoError(t, err, "Failed to test request")
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode, "Unexpected status code")
 		})
 	}
 
-	// 清理测试表
-	err = cleanupTestTables(db)
-	if err != nil {
-		t.Errorf("Failed to clean up test tables: %v", err)
-	}
+	//// 清理测试表
+	//err = cleanupTestTables(db)
+	//if err != nil {
+	//	t.Errorf("Failed to clean up test tables: %v", err)
+	//}
 }
 
 // 辅助函数：设置测试表
