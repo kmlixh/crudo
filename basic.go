@@ -24,7 +24,7 @@ type (
 
 // RenderJson 渲染JSON响应
 func RenderJson(c *fiber.Ctx, code int, msg string, data interface{}) error {
-	return c.Status(http.StatusOK).JSON(CodeMsg{
+	return c.Status(code).JSON(CodeMsg{
 		Code:    code,
 		Message: msg,
 		Data:    data,
