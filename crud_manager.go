@@ -130,9 +130,16 @@ func (cm *CrudManager) init() error {
 		}
 
 		fmt.Printf("Creating CRUD instance for table %s...\n", tblConf.Name)
+
+		// 确保表名不为空
+		tableName := tblConf.Table
+		if tableName == "" {
+			tableName = tblConf.Name // 如果表配置中没有指定 Table，则使用 Name
+		}
+
 		crud, err := NewCrud(
-			tblConf.Name,
-			tblConf.Table,
+			tblConf.PathPrefix,
+			tableName,
 			db,
 			tblConf.TransferMap,
 			tblConf.FieldOfList,

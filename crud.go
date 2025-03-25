@@ -98,6 +98,11 @@ type ConditionParam struct {
 	Values any           `json:"values"`
 }
 
+// 添加批量删除的请求结构
+type DeleteRequest struct {
+	IDs []int64 `json:"ids"` // 要删除的记录ID列表
+}
+
 func NewQueryBuilder(db *gom.DB, table string) *QueryBuilder {
 	return &QueryBuilder{
 		db:          db,
@@ -133,12 +138,15 @@ func (c *Crud) AddHandler(path string, h *RequestHandler) {
 
 func (h *RequestHandler) Handle(c *fiber.Ctx) error {
 	input, err := h.ParseRequestFunc(c)
+	fmt.Printf("ParseRequestFunc result: input=%+v, err=%v\n", input, err)
 	var result any
 	if err == nil {
 		result, err = h.DataOperationFunc(input)
+		fmt.Printf("DataOperationFunc result: result=%+v, err=%v\n", result, err)
 	}
 	if err == nil && h.TransferResultFunc != nil {
 		result, err = h.TransferResultFunc(result)
+		fmt.Printf("TransferResultFunc result: result=%+v, err=%v\n", result, err)
 	}
 	return h.RenderResponseFunc(c, result, err)
 }
@@ -184,8 +192,17 @@ func (c *Crud) InitDefaultHandler() error {
 			},
 		},
 		PathDelete: {
-			Method:            http.MethodDelete,
-			ParseRequestFunc:  RequestToQueryParamsTransfer(c.Table, c.TransferMap, c.queryBuilder.columnCache),
+			Method: http.MethodDelete,
+			ParseRequestFunc: func(ctx *fiber.Ctx) (any, error) {
+				// 尝试解析批量删除请求
+				var deleteReq DeleteRequest
+				if err := ctx.BodyParser(&deleteReq); err == nil {
+					return deleteReq, nil
+				}
+
+				// 回退到查询参数方式
+				return RequestToQueryParamsTransfer(c.Table, c.TransferMap, c.queryBuilder.columnCache)(ctx)
+			},
 			DataOperationFunc: c.deleteOperation(),
 			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
 				if err != nil {
@@ -300,8 +317,26 @@ func (c *Crud) tableOperation() DataOperationFunc {
 
 func (c *Crud) requestToMap() ParseRequestFunc {
 	return func(ctx *fiber.Ctx) (any, error) {
+		fmt.Printf("requestToMap: method=%s, path=%s\n", ctx.Method(), ctx.Path())
+		// 检查是否是删除操作
+		if ctx.Method() == http.MethodDelete {
+			var deleteReq DeleteRequest
+			if err := ctx.BodyParser(&deleteReq); err != nil {
+				fmt.Printf("requestToMap: delete request parse error: %v\n", err)
+				return nil, fmt.Errorf("invalid request body: %w", err)
+			}
+			if len(deleteReq.IDs) == 0 {
+				fmt.Printf("requestToMap: empty IDs\n")
+				return nil, errors.New("ids cannot be empty")
+			}
+			fmt.Printf("requestToMap: delete request parsed: %+v\n", deleteReq)
+			return deleteReq, nil
+		}
+
+		// 原有的处理逻辑
 		data := make(map[string]any)
 		if err := ctx.BodyParser(&data); err != nil {
+			fmt.Printf("requestToMap: body parse error: %v\n", err)
 			return nil, fmt.Errorf("invalid request body: %w", err)
 		}
 
@@ -311,7 +346,10 @@ func (c *Crud) requestToMap() ParseRequestFunc {
 			}
 		}
 
-		return c.transferData(data, false)
+		fmt.Printf("requestToMap: data before transfer: %+v\n", data)
+		result, err := c.transferData(data, false)
+		fmt.Printf("requestToMap: data after transfer: %+v, err=%v\n", result, err)
+		return result, err
 	}
 }
 
@@ -409,10 +447,11 @@ func (c *Crud) saveOperation() DataOperationFunc {
 			}
 			return c.transferData(queryResult.Data[0], true)
 		} else {
-			// 插入操作
+			// 插入操作 - 直接使用原始 SQL 和预处理语句
 			columns := make([]string, 0, len(data))
 			values := make([]any, 0, len(data))
 			placeholders := make([]string, 0, len(data))
+
 			i := 1
 			for k, v := range data {
 				columns = append(columns, k)
@@ -421,7 +460,8 @@ func (c *Crud) saveOperation() DataOperationFunc {
 				i++
 			}
 
-			query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) RETURNING *",
+			// 为 PostgreSQL 使用 RETURNING 语法
+			query := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES (%s) RETURNING *",
 				c.Table,
 				strings.Join(columns, ", "),
 				strings.Join(placeholders, ", "))
@@ -430,16 +470,234 @@ func (c *Crud) saveOperation() DataOperationFunc {
 			if result.Error != nil {
 				return nil, result.Error
 			}
+
 			if len(result.Data) == 0 {
-				return nil, errors.New("failed to retrieve inserted data")
+				// 如果没有返回数据
+				return map[string]interface{}{
+					"success": true,
+				}, nil
 			}
+
 			return c.transferData(result.Data[0], true)
 		}
 	}
 }
 
-// 其他操作实现类似，限于篇幅省略...
-// 完整实现需要补充deleteOperation/getOperation/listOperation
+// 修改 deleteOperation 方法
+func (c *Crud) deleteOperation() DataOperationFunc {
+	return func(input any) (any, error) {
+		// 批量删除模式
+		if deleteReq, ok := input.(DeleteRequest); ok {
+			if len(deleteReq.IDs) == 0 {
+				return nil, errors.New("ids cannot be empty")
+			}
+
+			// 批量删除 - 构建 WHERE id IN (...) 条件
+			placeholders := make([]string, len(deleteReq.IDs))
+			values := make([]any, len(deleteReq.IDs))
+			for i, id := range deleteReq.IDs {
+				placeholders[i] = fmt.Sprintf("$%d", i+1)
+				values[i] = id
+			}
+
+			query := fmt.Sprintf("DELETE FROM \"%s\" WHERE id IN (%s)",
+				c.Table,
+				strings.Join(placeholders, ", "))
+
+			result := c.Db.Chain().Raw(query, values...).Exec()
+			if result.Error != nil {
+				return nil, fmt.Errorf("batch delete failed: %w", result.Error)
+			}
+
+			return map[string]interface{}{
+				"deleted_count": result.RowsAffected,
+				"ids":           deleteReq.IDs,
+			}, nil
+		}
+
+		// 单个ID或条件删除模式
+		params, ok := input.(QueryParams)
+		if !ok {
+			return nil, errors.New("invalid delete parameters")
+		}
+
+		// 使用 DELETE 语句但不带 RETURNING
+		query := fmt.Sprintf("DELETE FROM \"%s\"", c.Table)
+		values := make([]any, 0)
+		var conditions []string
+
+		valueIndex := 1
+		for _, v := range params.ConditionParams {
+			condition, condValues := buildCondition(v, valueIndex)
+			if condition != "" {
+				conditions = append(conditions, condition)
+				values = append(values, condValues...)
+				valueIndex += len(condValues)
+			}
+		}
+
+		if len(conditions) > 0 {
+			query += " WHERE " + strings.Join(conditions, " AND ")
+		}
+
+		result := c.Db.Chain().Raw(query, values...).Exec()
+		if result.Error != nil {
+			return nil, fmt.Errorf("delete failed: %w", result.Error)
+		}
+
+		return map[string]interface{}{
+			"deleted_count": result.RowsAffected,
+		}, nil
+	}
+}
+
+// 构建 SQL 条件
+func buildCondition(param ConditionParam, startIndex int) (string, []any) {
+	var condition string
+	var values []any
+
+	switch param.Op {
+	case define.OpEq:
+		condition = fmt.Sprintf("%s = $%d", param.Key, startIndex)
+		values = []any{param.Values}
+	case define.OpNe:
+		condition = fmt.Sprintf("%s != $%d", param.Key, startIndex)
+		values = []any{param.Values}
+	case define.OpGt:
+		condition = fmt.Sprintf("%s > $%d", param.Key, startIndex)
+		values = []any{param.Values}
+	case define.OpGe:
+		condition = fmt.Sprintf("%s >= $%d", param.Key, startIndex)
+		values = []any{param.Values}
+	case define.OpLt:
+		condition = fmt.Sprintf("%s < $%d", param.Key, startIndex)
+		values = []any{param.Values}
+	case define.OpLe:
+		condition = fmt.Sprintf("%s <= $%d", param.Key, startIndex)
+		values = []any{param.Values}
+	case define.OpIn:
+		// 处理 IN 操作
+		if vals, ok := param.Values.([]any); ok && len(vals) > 0 {
+			placeholders := make([]string, len(vals))
+			for i := range vals {
+				placeholders[i] = fmt.Sprintf("$%d", startIndex+i)
+			}
+			condition = fmt.Sprintf("%s IN (%s)", param.Key, strings.Join(placeholders, ", "))
+			values = vals
+		}
+	default:
+		// 对于其他操作，暂时不处理
+		return "", nil
+	}
+
+	return condition, values
+}
+
+// 修改 getOperation 方法
+func (c *Crud) getOperation() DataOperationFunc {
+	return func(input any) (any, error) {
+		params, ok := input.(QueryParams)
+		if !ok {
+			// 如果无法解析为 QueryParams，使用默认值
+			params = QueryParams{
+				Table: c.Table,
+			}
+		}
+
+		chain := c.Db.Chain().Table(c.Table)
+		for _, v := range params.ConditionParams {
+			chain.Where(v.Key, v.Op, v.Values)
+		}
+		if len(c.FieldOfDetail) > 0 {
+			chain.Fields(c.FieldOfDetail...)
+		}
+
+		result := chain.First()
+		if result.Error != nil {
+			// 对于"没有行"的情况返回空对象而不是错误
+			if strings.Contains(result.Error.Error(), "no rows") {
+				return map[string]interface{}{}, nil
+			}
+			return nil, fmt.Errorf("get failed: %w", result.Error)
+		}
+
+		if len(result.Data) == 0 {
+			return map[string]interface{}{}, nil
+		}
+
+		// 转换字段名称
+		return c.transferData(result.Data[0], true)
+	}
+}
+
+// 修改 listOperation 方法
+func (c *Crud) listOperation() DataOperationFunc {
+	return func(input any) (any, error) {
+		params, ok := input.(QueryParams)
+		if !ok {
+			// 如果无法解析为 QueryParams，使用默认值
+			params = QueryParams{
+				Table:    c.Table,
+				Page:     1,
+				PageSize: 10,
+			}
+		}
+
+		chain := c.Db.Chain().Table(c.Table)
+		for _, v := range params.ConditionParams {
+			chain.Where(v.Key, v.Op, v.Values)
+		}
+		page := params.Page
+		pageSize := params.PageSize
+		if pageSize == 0 {
+			pageSize = 10
+		}
+		if page == 0 {
+			page = 1
+		}
+		if len(params.OrderBy) > 0 {
+			for _, v := range params.OrderBy {
+				chain.OrderBy(v)
+			}
+		}
+		if len(params.OrderByDesc) > 0 {
+			for _, v := range params.OrderByDesc {
+				chain.OrderByDesc(v)
+			}
+		}
+		if len(c.FieldOfList) > 0 {
+			chain.Fields(c.FieldOfList...)
+		}
+
+		// 获取总数
+		total, err := chain.Count()
+		if err != nil {
+			return nil, fmt.Errorf("count failed: %w", err)
+		}
+
+		// 执行分页查询
+		result := chain.Limit(pageSize).Offset((page - 1) * pageSize).List()
+		if result.Error != nil {
+			return nil, fmt.Errorf("list query failed: %w", result.Error)
+		}
+
+		// 转换分页结果
+		var converted []map[string]any
+		for _, item := range result.Data {
+			if convertedData, err := c.transferData(item, true); err == nil {
+				converted = append(converted, convertedData)
+			}
+		}
+
+		// 构建分页响应
+		return map[string]any{
+			"Page":     page,
+			"PageSize": pageSize,
+			"Total":    total,
+			"List":     converted,
+		}, nil
+	}
+}
 
 func doNothingTransfer(input any) (any, error) {
 	return input, nil
@@ -490,8 +748,10 @@ func NewCrud(prefix, table string, db *gom.DB, transferMap map[string]string, fi
 
 func RequestToQueryParamsTransfer(tableName string, transferMap map[string]string, columnMap map[string]define.ColumnInfo) ParseRequestFunc {
 	return func(c *fiber.Ctx) (any, error) {
-		queryParams := QueryParams{}
-		queryParams.Table = tableName
+		fmt.Printf("RequestToQueryParamsTransfer: tableName=%s\n", tableName)
+		queryParams := QueryParams{
+			Table: tableName,
+		}
 
 		// 从Request的Query生成一个Map
 		c.Request().URI().QueryArgs().VisitAll(func(key, value []byte) {
@@ -561,6 +821,7 @@ func RequestToQueryParamsTransfer(tableName string, transferMap map[string]strin
 			}
 		})
 
+		fmt.Printf("RequestToQueryParamsTransfer: queryParams=%+v\n", queryParams)
 		return queryParams, nil
 	}
 }
@@ -735,123 +996,6 @@ func KeyToKeyOp(key string) (string, define.OpType) {
 	}
 
 	return field, op
-}
-
-// 添加缺失的queryParamsParser方法
-
-// 添加deleteOperation方法
-func (c *Crud) deleteOperation() DataOperationFunc {
-	return func(input any) (any, error) {
-		params, ok := input.(QueryParams)
-		if !ok {
-			return nil, errors.New("invalid delete parameters")
-		}
-
-		chain := c.Db.Chain().Table(c.Table)
-		for _, v := range params.ConditionParams {
-			chain.Where(v.Key, v.Op, v.Values)
-		}
-
-		result := chain.Delete()
-		if result.Error != nil {
-			return nil, fmt.Errorf("delete failed: %w", result.Error)
-		}
-		return result, nil
-	}
-}
-
-// 添加getOperation方法
-func (c *Crud) getOperation() DataOperationFunc {
-	return func(input any) (any, error) {
-		params, ok := input.(QueryParams)
-		if !ok {
-			return nil, errors.New("invalid get parameters")
-		}
-
-		chain := c.Db.Chain().Table(c.Table)
-		for _, v := range params.ConditionParams {
-			chain.Where(v.Key, v.Op, v.Values)
-		}
-		if len(c.FieldOfDetail) > 0 {
-			chain.Fields(c.FieldOfDetail...)
-		}
-
-		result := chain.First()
-		if result.Error != nil {
-			return nil, fmt.Errorf("get failed: %w", result.Error)
-		}
-
-		if len(result.Data) == 0 {
-			return nil, errors.New("record not found")
-		}
-
-		// 转换字段名称
-		return c.transferData(result.Data[0], true)
-	}
-}
-
-// 修改后的分页处理逻辑
-func (c *Crud) listOperation() DataOperationFunc {
-	return func(input any) (any, error) {
-		params, ok := input.(QueryParams)
-		if !ok {
-			return nil, errors.New("invalid list parameters")
-		}
-
-		chain := c.Db.Chain().Table(c.Table)
-		for _, v := range params.ConditionParams {
-			chain.Where(v.Key, v.Op, v.Values)
-		}
-		page := params.Page
-		pageSize := params.PageSize
-		if pageSize == 0 {
-			pageSize = 10
-		}
-		if page == 0 {
-			page = 1
-		}
-		if len(params.OrderBy) > 0 {
-			for _, v := range params.OrderBy {
-				chain.OrderBy(v)
-			}
-		}
-		if len(params.OrderByDesc) > 0 {
-			for _, v := range params.OrderByDesc {
-				chain.OrderByDesc(v)
-			}
-		}
-		if len(c.FieldOfList) > 0 {
-			chain.Fields(c.FieldOfList...)
-		}
-
-		// 获取总数
-		total, err := chain.Count()
-		if err != nil {
-			return nil, fmt.Errorf("count failed: %w", err)
-		}
-
-		// 执行分页查询
-		result := chain.Limit(pageSize).Offset((page - 1) * pageSize).List()
-		if result.Error != nil {
-			return nil, fmt.Errorf("list query failed: %w", result.Error)
-		}
-
-		// 转换分页结果
-		var converted []map[string]any
-		for _, item := range result.Data {
-			if convertedData, err := c.transferData(item, true); err == nil {
-				converted = append(converted, convertedData)
-			}
-		}
-
-		// 构建分页响应
-		return map[string]any{
-			"Page":     page,
-			"PageSize": pageSize,
-			"Total":    total,
-			"List":     converted,
-		}, nil
-	}
 }
 
 func (c *Crud) Handle(ctx *fiber.Ctx) error {

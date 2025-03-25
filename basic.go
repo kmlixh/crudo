@@ -47,9 +47,24 @@ func JsonErrs(c *fiber.Ctx, err error) error {
 // RenderErrs 渲染错误响应
 func RenderErrs(c *fiber.Ctx, err error) error {
 	if err == nil {
-		return RenderJson(c, 0, "ok", nil)
+		return RenderJson(c, http.StatusOK, "ok", nil)
 	}
-	return RenderJson(c, 500, err.Error(), nil)
+
+	// 获取适当的错误代码
+	code := http.StatusInternalServerError
+	if strings.Contains(err.Error(), "invalid request body") ||
+		strings.Contains(err.Error(), "ids cannot be empty") {
+		code = http.StatusBadRequest
+	} else if strings.Contains(err.Error(), "not found") {
+		code = http.StatusNotFound
+	}
+
+	// 始终返回 HTTP 200 OK，但在响应体中包含错误状态码
+	return c.Status(http.StatusOK).JSON(CodeMsg{
+		Code:    code,
+		Message: err.Error(),
+		Data:    nil,
+	})
 }
 
 // RenderErr2 渲染错误响应

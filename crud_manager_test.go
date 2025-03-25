@@ -46,16 +46,18 @@ func TestCrudManagerRouting(t *testing.T) {
 				Name:       "products",
 				Database:   "test_db",
 				PathPrefix: "/ecommerce/products",
+				Table:      "products",
 				TransferMap: map[string]string{
 					"name": "product_name",
 					"desc": "description",
 				},
-				HandlerFilters: []string{"save", "list"},
+				HandlerFilters: []string{"save", "list", "delete"},
 			},
 			{
 				Name:       "categories",
 				Database:   "test_db",
 				PathPrefix: "/ecommerce/categories",
+				Table:      "categories",
 				TransferMap: map[string]string{
 					"name": "category_name",
 					"desc": "description",
@@ -79,7 +81,12 @@ func TestCrudManagerRouting(t *testing.T) {
 	}
 	defer db.Close()
 
-	// 创建测试表
+	// 清理并创建测试表
+	err = cleanupTestTables(db)
+	if err != nil {
+		t.Fatalf("Failed to clean up test tables: %v", err)
+	}
+
 	err = setupTestTables(db)
 	if err != nil {
 		t.Fatalf("Failed to setup test tables: %v", err)
@@ -113,7 +120,7 @@ func TestCrudManagerRouting(t *testing.T) {
 			name:           "Products Save - Valid",
 			method:         "POST",
 			path:           "/api/ecommerce/products/save",
-			body:           `{"name":"Test Product","desc":"Test Description","price":99.99}`,
+			body:           `{"product_name":"Test Product","description":"Test Description","price":99.99}`,
 			expectedStatus: http.StatusOK,
 		},
 		{
@@ -158,14 +165,37 @@ func TestCrudManagerRouting(t *testing.T) {
 			path:           "/api/ecommerce/products/list",
 			expectedStatus: http.StatusMethodNotAllowed,
 		},
+		{
+			name:           "Products Batch Delete - Valid",
+			method:         "DELETE",
+			path:           "/api/ecommerce/products/delete",
+			body:           `{"ids":[1,2,3]}`,
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:           "Products Batch Delete - Empty IDs",
+			method:         "DELETE",
+			path:           "/api/ecommerce/products/delete",
+			body:           `{"ids":[]}`,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Products Batch Delete - Invalid JSON",
+			method:         "DELETE",
+			path:           "/api/ecommerce/products/delete",
+			body:           `{"ids":[1,2,3`,
+			expectedStatus: http.StatusInternalServerError,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			var req *http.Request
 			if tt.body != "" {
-				req.Header.Set("Content-Type", "application/json")
 				req = httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body))
+				req.Header.Set("Content-Type", "application/json")
+			} else {
+				req = httptest.NewRequest(tt.method, tt.path, nil)
 			}
 
 			// 设置测试超时时间，特别是在调试模式下
@@ -214,7 +244,7 @@ func setupTestTables(db *gom.DB) error {
 
 // 辅助函数：清理测试表
 func cleanupTestTables(db *gom.DB) error {
-	if err := db.Chain().Raw("DROP TABLE IF EXISTS products, categories").Exec().Error; err != nil {
+	if err := db.Chain().Raw("DROP TABLE IF EXISTS products, categories CASCADE").Exec().Error; err != nil {
 		return fmt.Errorf("failed to drop test tables: %v", err)
 	}
 	return nil
