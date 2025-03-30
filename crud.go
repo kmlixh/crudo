@@ -233,19 +233,10 @@ func (c *Crud) InitDefaultHandler() error {
 			},
 		},
 		PathList: {
-			Method:            http.MethodGet,
-			ParseRequestFunc:  RequestToQueryParamsTransfer(c.Table, c.TransferMap, c.queryBuilder.columnCache),
-			DataOperationFunc: c.listOperation(),
-			TransferResultFunc: func(data any) (any, error) {
-				if data == nil {
-					return nil, nil
-				}
-				result, ok := data.(map[string]any)
-				if !ok {
-					return nil, fmt.Errorf("unexpected data type: %T", data)
-				}
-				return result, nil
-			},
+			Method:             http.MethodGet,
+			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, c.queryBuilder.columnCache),
+			DataOperationFunc:  c.listOperation(),
+			TransferResultFunc: doNothingTransfer,
 			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
 				if err != nil {
 					return RenderErrs(ctx, err)
