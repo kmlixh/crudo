@@ -668,34 +668,7 @@ func (c *Crud) listOperation() DataOperationFunc {
 		if len(c.FieldOfList) > 0 {
 			chain.Fields(c.FieldOfList...)
 		}
-
-		// 获取总数
-		total, err := chain.Count()
-		if err != nil {
-			return nil, fmt.Errorf("count failed: %w", err)
-		}
-
-		// 执行分页查询
-		result := chain.Limit(pageSize).Offset((page - 1) * pageSize).List()
-		if result.Error != nil {
-			return nil, fmt.Errorf("list query failed: %w", result.Error)
-		}
-
-		// 转换分页结果
-		var converted []map[string]any
-		for _, item := range result.Data {
-			if convertedData, err := c.transferData(item, true); err == nil {
-				converted = append(converted, convertedData)
-			}
-		}
-
-		// 构建分页响应
-		return map[string]any{
-			"Page":     page,
-			"PageSize": pageSize,
-			"Total":    total,
-			"List":     converted,
-		}, nil
+		return chain.Page(page, pageSize).PageInfo()
 	}
 }
 
