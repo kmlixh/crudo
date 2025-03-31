@@ -277,32 +277,7 @@ func (c *Crud) InitDefaultHandler() error {
 
 func (c *Crud) tableOperation() DataOperationFunc {
 	return func(input any) (any, error) {
-		tableInfo, er := c.Db.GetTableInfo(c.Table)
-		if er != nil {
-			return nil, fmt.Errorf("failed to get table info: %w", er)
-		}
-		columns := make([]Column, 0)
-		primaryKeyAuto := make([]string, 0)
-		for _, col := range tableInfo.Columns {
-			columns = append(columns, Column{
-				Name:    col.Name,
-				Type:    col.DataType,
-				Comment: col.Comment,
-				IsKey:   col.IsPrimaryKey,
-				IsAuto:  col.IsAutoIncrement,
-			})
-			if col.IsAutoIncrement {
-				primaryKeyAuto = append(primaryKeyAuto, col.Name)
-			}
-		}
-		table := TableInfo{
-			TableName:      tableInfo.TableName,
-			Comment:        tableInfo.TableComment,
-			PrimaryKey:     tableInfo.PrimaryKeys,
-			PrimaryKeyAuto: primaryKeyAuto,
-			Columns:        columns,
-		}
-		return table, nil
+		return c.Db.GetTableInfo(c.Table)
 	}
 }
 
