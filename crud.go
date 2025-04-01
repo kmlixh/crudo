@@ -395,6 +395,39 @@ func (c *Crud) saveOperation() DataOperationFunc {
 			delete(data, "id")
 		}
 
+		// 获取表结构信息，用于自动填充时间字段
+		columnInfo, err := c.queryBuilder.CacheTableInfo()
+		if err == nil {
+			now := time.Now()
+
+			// 自动填充时间字段逻辑
+			// 新建记录时填充创建时间字段
+			if !isUpdate {
+				timeFieldNames := []string{"create_at", "created_at", "creation_time", "create_time"}
+				for _, fieldName := range timeFieldNames {
+					if col, exists := columnInfo[fieldName]; exists {
+						if isTimeField(col.DataType) {
+							if _, hasField := data[fieldName]; !hasField || data[fieldName] == nil {
+								data[fieldName] = now
+							}
+						}
+					}
+				}
+			}
+
+			// 无论是新建还是更新记录，都填充更新时间字段
+			updateTimeFieldNames := []string{"update_at", "updated_at", "update_time", "modification_time", "modified_at"}
+			for _, fieldName := range updateTimeFieldNames {
+				if col, exists := columnInfo[fieldName]; exists {
+					if isTimeField(col.DataType) {
+						if _, hasField := data[fieldName]; !hasField || data[fieldName] == nil {
+							data[fieldName] = now
+						}
+					}
+				}
+			}
+		}
+
 		// 执行保存操作
 		if isUpdate {
 			// 更新操作
@@ -984,4 +1017,21 @@ func (c *Crud) RemoveHandler(path string) {
 
 func (c *Crud) GetPrefix() string {
 	return c.Prefix
+}
+
+// isTimeField 判断字段类型是否为时间相关类型
+func isTimeField(dataType string) bool {
+	timeTypes := []string{
+		"time", "date", "timestamp", "datetime", "timestamptz",
+		"time.Time", "Time", "DATE", "TIMESTAMP", "DATETIME",
+	}
+
+	dataTypeLower := strings.ToLower(dataType)
+	for _, tt := range timeTypes {
+		if strings.Contains(dataTypeLower, strings.ToLower(tt)) {
+			return true
+		}
+	}
+
+	return false
 }
