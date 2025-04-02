@@ -102,7 +102,7 @@ type ConditionParam struct {
 
 // 添加批量删除的请求结构
 type DeleteRequest struct {
-	IDs []int64 `json:"ids"` // 要删除的记录ID列表
+	IDs []any `json:"ids"` // 要删除的记录ID列表，支持字符串和数字类型
 }
 
 func NewQueryBuilder(db *gom.DB, table string) *QueryBuilder {
@@ -499,13 +499,25 @@ func (c *Crud) saveOperation() DataOperationFunc {
 // 修改 deleteOperation 方法
 func (c *Crud) deleteOperation() DataOperationFunc {
 	return func(input any) (any, error) {
+		// 获取表的主键信息
+		tableInfo, err := c.Db.GetTableInfo(c.Table)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get table info: %w", err)
+		}
+
+		// 查找主键列
+		primaryKey := tableInfo.PrimaryKeys[0]
+		if primaryKey == "" {
+			return nil, errors.New("table has no primary key")
+		}
+
 		// 批量删除模式
 		if deleteReq, ok := input.(DeleteRequest); ok {
 			if len(deleteReq.IDs) == 0 {
 				return nil, errors.New("ids cannot be empty")
 			}
 
-			// 批量删除 - 构建 WHERE id IN (...) 条件
+			// 批量删除 - 构建 WHERE primaryKey IN (...) 条件
 			placeholders := make([]string, len(deleteReq.IDs))
 			values := make([]any, len(deleteReq.IDs))
 			for i, id := range deleteReq.IDs {
@@ -513,8 +525,9 @@ func (c *Crud) deleteOperation() DataOperationFunc {
 				values[i] = id
 			}
 
-			query := fmt.Sprintf("DELETE FROM \"%s\" WHERE id IN (%s)",
+			query := fmt.Sprintf("DELETE FROM \"%s\" WHERE \"%s\" IN (%s)",
 				c.Table,
+				primaryKey,
 				strings.Join(placeholders, ", "))
 
 			result := c.Db.Chain().Raw(query, values...).Exec()
