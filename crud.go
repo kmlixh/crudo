@@ -194,7 +194,7 @@ func (c *Crud) InitDefaultHandler() error {
 			},
 		},
 		PathDelete: {
-			Method: http.MethodDelete,
+			Method: http.MethodPost,
 			ParseRequestFunc: func(ctx *fiber.Ctx) (any, error) {
 				// 尝试解析批量删除请求
 				var deleteReq DeleteRequest
