@@ -181,7 +181,7 @@ func (cm *CrudManager) handle(c *fiber.Ctx) error {
 	prefix := path[:lastSlashIndex]
 
 	// 直接查找对应的crud实例
-	if crud, exists := cm.routes[prefix]; exists {
+	if crud, exists := cm.routes["/"+prefix]; exists {
 		matchedCrud = crud
 	}
 	cm.mu.RUnlock()
