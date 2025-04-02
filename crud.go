@@ -26,6 +26,7 @@ const (
 	PathDelete = "delete"
 	PathGet    = "get"
 	PathList   = "list"
+	PathPage   = "page"
 	PathTable  = "table"
 )
 
@@ -61,6 +62,7 @@ type ICrud interface {
 	RegisterRoutes(r fiber.Router)
 	GetPrefix() string
 	GetAvailablePaths() []string
+	Handle(c *fiber.Ctx) error
 }
 
 type Crud struct {
@@ -236,6 +238,18 @@ func (c *Crud) InitDefaultHandler() error {
 			Method:             http.MethodGet,
 			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, c.queryBuilder.columnCache),
 			DataOperationFunc:  c.listOperation(),
+			TransferResultFunc: doNothingTransfer,
+			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
+				if err != nil {
+					return RenderErrs(ctx, err)
+				}
+				return RenderOk(ctx, data)
+			},
+		},
+		PathPage: {
+			Method:             http.MethodGet,
+			ParseRequestFunc:   RequestToQueryParamsTransfer(c.Table, c.TransferMap, c.queryBuilder.columnCache),
+			DataOperationFunc:  c.pageOperation(),
 			TransferResultFunc: doNothingTransfer,
 			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
 				if err != nil {
@@ -628,9 +642,7 @@ func (c *Crud) getOperation() DataOperationFunc {
 		return c.transferData(result.Data[0], true)
 	}
 }
-
-// 修改 listOperation 方法
-func (c *Crud) listOperation() DataOperationFunc {
+func (c *Crud) pageOperation() DataOperationFunc {
 	return func(input any) (any, error) {
 		params, ok := input.(QueryParams)
 		if !ok {
@@ -671,26 +683,44 @@ func (c *Crud) listOperation() DataOperationFunc {
 	}
 }
 
-func doNothingTransfer(input any) (any, error) {
-	return input, nil
+// 修改 listOperation 方法
+func (c *Crud) listOperation() DataOperationFunc {
+	return func(input any) (any, error) {
+		params, ok := input.(QueryParams)
+		if !ok {
+			// 如果无法解析为 QueryParams，使用默认值
+			params = QueryParams{
+				Table: c.Table,
+			}
+		}
+
+		chain := c.Db.Chain().Table(c.Table)
+		for _, v := range params.ConditionParams {
+			chain.Where(v.Key, v.Op, v.Values)
+		}
+		if len(params.OrderBy) > 0 {
+			for _, v := range params.OrderBy {
+				chain.OrderBy(v)
+			}
+		}
+		if len(params.OrderByDesc) > 0 {
+			for _, v := range params.OrderByDesc {
+				chain.OrderByDesc(v)
+			}
+		}
+		if len(c.FieldOfList) > 0 {
+			chain.Fields(c.FieldOfList...)
+		}
+		result := chain.List()
+		if result.Error != nil {
+			return nil, fmt.Errorf("list failed: %w", result.Error)
+		}
+		return result.Data, nil
+	}
 }
 
-func renderJSON(ctx *fiber.Ctx, data any, err error) error {
-	code := SuccessCode
-	msg := SuccessMsg
-	if err != nil {
-		code = ErrorCode
-		msg = err.Error()
-		data = nil
-	}
-	if data == nil {
-		data = map[string]interface{}{}
-	}
-	return ctx.Status(http.StatusOK).JSON(CodeMsg{
-		Code:    code,
-		Data:    data,
-		Message: msg,
-	})
+func doNothingTransfer(input any) (any, error) {
+	return input, nil
 }
 
 // 使用示例
@@ -975,6 +1005,10 @@ func (c *Crud) Handle(ctx *fiber.Ctx) error {
 	path := ctx.Path()
 
 	// 提取操作部分
+	if !strings.Contains(path, c.Prefix) {
+		return errors.New("path not configured")
+	}
+	path = path[strings.Index(path, c.Prefix):]
 	operation := strings.TrimPrefix(path, c.Prefix)
 	operation = strings.TrimPrefix(operation, "/")
 

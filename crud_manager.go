@@ -170,17 +170,19 @@ func (cm *CrudManager) handle(c *fiber.Ctx) error {
 	// 找到匹配的 Crud 实例
 	cm.mu.RLock()
 	var matchedCrud ICrud
-	var matchedPrefix string
-	for prefix, crud := range cm.routes {
-		// 确保前缀格式一致
-		tempPrefix := strings.TrimPrefix(prefix, "/")
+	// 将路径按最后一个"/"分割为前缀和方法名
+	lastSlashIndex := strings.LastIndex(path, "/")
+	if lastSlashIndex == -1 {
+		// 如果路径中没有"/"，则无法匹配
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "path not configured"})
+	}
 
-		// 只有当 tempPrefix 不为空且 path 以 tempPrefix 开头时才匹配
-		if tempPrefix != "" && strings.HasPrefix(path, tempPrefix) {
-			matchedCrud = crud
-			matchedPrefix = tempPrefix
-			break
-		}
+	// 获取前缀部分
+	prefix := path[:lastSlashIndex]
+
+	// 直接查找对应的crud实例
+	if crud, exists := cm.routes[prefix]; exists {
+		matchedCrud = crud
 	}
 	cm.mu.RUnlock()
 
@@ -188,27 +190,7 @@ func (cm *CrudManager) handle(c *fiber.Ctx) error {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "path not configured"})
 	}
 
-	// 获取操作部分
-	operation := strings.TrimPrefix(path, matchedPrefix)
-	operation = strings.TrimPrefix(operation, "/")
-
-	// 获取对应的处理器
-	handler, exists := matchedCrud.GetHandler(operation)
-	if !exists || handler == nil {
-		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "operation not configured"})
-	}
-
-	if c.Method() != handler.Method {
-		return c.Status(http.StatusMethodNotAllowed).JSON(fiber.Map{"error": "method not allowed"})
-	}
-
-	if handler.PreHandle != nil {
-		if err := handler.PreHandle(c); err != nil {
-			return err
-		}
-	}
-
-	return handler.Handle(c)
+	return matchedCrud.Handle(c)
 }
 
 // 更新配置（线程安全）
