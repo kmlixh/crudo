@@ -298,20 +298,6 @@ func (c *Crud) tableOperation() DataOperationFunc {
 func (c *Crud) requestToMap() ParseRequestFunc {
 	return func(ctx *fiber.Ctx) (any, error) {
 		fmt.Printf("requestToMap: method=%s, path=%s\n", ctx.Method(), ctx.Path())
-		// 检查是否是删除操作
-		if ctx.Method() == http.MethodDelete {
-			var deleteReq DeleteRequest
-			if err := ctx.BodyParser(&deleteReq); err != nil {
-				fmt.Printf("requestToMap: delete request parse error: %v\n", err)
-				return nil, fmt.Errorf("invalid request body: %w", err)
-			}
-			if len(deleteReq.IDs) == 0 {
-				fmt.Printf("requestToMap: empty IDs\n")
-				return nil, errors.New("ids cannot be empty")
-			}
-			fmt.Printf("requestToMap: delete request parsed: %+v\n", deleteReq)
-			return deleteReq, nil
-		}
 
 		// 原有的处理逻辑
 		data := make(map[string]any)
