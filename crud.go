@@ -521,8 +521,14 @@ func (c *Crud) deleteOperation() DataOperationFunc {
 				return nil, fmt.Errorf("batch delete failed: %w", result.Error)
 			}
 
+			// Call the RowsAffected function to get the actual count
+			rowsAffected, err := result.RowsAffected()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get affected rows: %w", err)
+			}
+
 			return map[string]interface{}{
-				"deleted_count": result.RowsAffected,
+				"deleted_count": rowsAffected,
 				"ids":           deleteReq.IDs,
 			}, nil
 		}
@@ -557,8 +563,14 @@ func (c *Crud) deleteOperation() DataOperationFunc {
 			return nil, fmt.Errorf("delete failed: %w", result.Error)
 		}
 
+		// Call the RowsAffected function to get the actual count
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get affected rows: %w", err)
+		}
+
 		return map[string]interface{}{
-			"deleted_count": result.RowsAffected,
+			"deleted_count": rowsAffected,
 		}, nil
 	}
 }
