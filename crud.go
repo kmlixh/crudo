@@ -898,11 +898,45 @@ func TransferType(column define.ColumnInfo) TransferTypeFunc {
 		}
 	case "time.Time":
 		return func(v string) (any, error) {
-			val, err := time.Parse(time.RFC3339, v)
-			if err != nil {
-				return nil, err
+			// 支持多种日期时间格式
+			timeFormats := []string{
+				time.RFC3339,          // 2006-01-02T15:04:05Z07:00
+				"2006-01-02T15:04:05", // ISO8601
+				"2006-01-02 15:04:05", // 常见日期时间格式
+				"2006-01-02 15:04",    // 日期时间不含秒
+				"2006-01-02",          // 仅日期
+				"01/02/2006 15:04:05", // 美式日期时间
+				"01/02/2006",          // 美式日期
+				"02/01/2006 15:04:05", // 欧式日期时间
+				"02/01/2006",          // 欧式日期
+				"20060102150405",      // 紧凑格式
+				"20060102",            // 紧凑日期
+				time.ANSIC,
+				time.UnixDate,
+				time.RubyDate,
+				time.RFC822,
+				time.RFC822Z,
+				time.RFC850,
+				time.RFC1123,
+				time.RFC1123Z,
+				time.RFC3339Nano,
+				time.Kitchen,
+				time.Stamp,
+				time.StampMilli,
+				time.StampMicro,
+				time.StampNano,
 			}
-			return val, nil
+
+			var err error
+			for _, format := range timeFormats {
+				val, err := time.Parse(format, v)
+				if err == nil {
+					return val, nil
+				}
+			}
+
+			// 如果所有格式都无法解析，返回最后一个错误
+			return nil, fmt.Errorf("无法解析为时间格式: %s (错误: %v)", v, err)
 		}
 	case "uint8":
 		return func(v string) (any, error) {
