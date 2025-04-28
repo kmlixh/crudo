@@ -401,6 +401,15 @@ func (c *Crud) saveOperation() DataOperationFunc {
 		// 获取第一个主键字段
 		primaryKey := tableInfo.PrimaryKeys[0]
 
+		// 检查主键是否是自增的
+		isAutoIncrement := false
+		for _, col := range tableInfo.Columns {
+			if col.Name == primaryKey && col.IsAutoIncrement {
+				isAutoIncrement = true
+				break
+			}
+		}
+
 		// 检查是否是更新操作
 		var isUpdate bool
 		var primaryKeyValue any
@@ -408,6 +417,12 @@ func (c *Crud) saveOperation() DataOperationFunc {
 			isUpdate = true
 			primaryKeyValue = pkVal
 			delete(data, primaryKey)
+		} else {
+			// 如果不是更新操作，且主键是自增的，则删除主键字段
+			// 这样可以确保数据库自动生成主键值
+			if isAutoIncrement && hasPK {
+				delete(data, primaryKey)
+			}
 		}
 
 		// 获取表结构信息，用于自动填充时间字段
