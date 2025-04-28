@@ -24,6 +24,7 @@ const (
 
 const (
 	PathSave   = "save"
+	PathUpdate = "update"
 	PathDelete = "delete"
 	PathGet    = "get"
 	PathList   = "list"
@@ -187,6 +188,17 @@ func (c *Crud) InitDefaultHandler() error {
 			Method:            http.MethodPost,
 			ParseRequestFunc:  c.requestToMap(),
 			DataOperationFunc: c.saveOperation(),
+			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
+				if err != nil {
+					return RenderErrs(ctx, err)
+				}
+				return RenderOk(ctx, data)
+			},
+		},
+		PathUpdate: {
+			Method:            http.MethodPost,
+			ParseRequestFunc:  c.requestToMap(),
+			DataOperationFunc: c.updateOperation(),
 			RenderResponseFunc: func(ctx *fiber.Ctx, data any, err error) error {
 				if err != nil {
 					return RenderErrs(ctx, err)
@@ -403,30 +415,30 @@ func (c *Crud) saveOperation() DataOperationFunc {
 
 		// 检查主键是否是自增的
 		isAutoIncrement := false
+
 		for _, col := range tableInfo.Columns {
-			if col.Name == primaryKey && col.IsAutoIncrement {
+			if col.IsAutoIncrement && col.Name == primaryKey {
 				isAutoIncrement = true
 				break
 			}
 		}
 
-		// 检查是否是更新操作
-		var isUpdate bool
-		var primaryKeyValue any
+		// 处理主键值
 		if pkVal, hasPK := data[primaryKey]; hasPK {
-			// 如果提供了主键，但主键值无效，直接返回错误
-			// 主键值有效，标记为更新操作
+			// 如果提供了主键且值有效，这不应该在保存操作中提供，应使用更新操作
 			if isPrimaryKeyValid(pkVal) {
-				isUpdate = true
-				primaryKeyValue = pkVal
+				return nil, fmt.Errorf("保存操作不应提供有效的主键，请使用更新操作")
 			}
+			// 主键值无效，移除它以便数据库自动生成
 			delete(data, primaryKey)
-		} else if isAutoIncrement {
-			// 没有提供主键，但主键是自增的，这是正常的新增操作
-			isUpdate = false
-		} else {
-			// 没有提供主键，且主键不是自增的，必须要有主键
-			return nil, errors.New("主键不是自增的，必须提供有效的主键值")
+		}
+
+		// 如果主键不是自增的且未提供主键，返回错误
+		if !isAutoIncrement {
+			_, hasPK := data[primaryKey]
+			if !hasPK {
+				return nil, errors.New("主键不是自增的，必须提供有效的主键值")
+			}
 		}
 
 		// 获取表结构信息，用于自动填充时间字段
@@ -434,115 +446,156 @@ func (c *Crud) saveOperation() DataOperationFunc {
 		if err == nil {
 			now := time.Now()
 
-			// 当主键为空时（新增记录时）处理所有时间字段
-			if !isUpdate {
-				// 遍历所有字段
-				for fieldName, colInfo := range columnInfo {
-					// 检查字段是否为时间类型
-					if isTimeField(colInfo.DataType) {
-						// 检查字段是否需要自动填充（为空或值不合法）
-						shouldFill := false
+			// 新增记录时处理所有时间字段
+			for fieldName, colInfo := range columnInfo {
+				// 检查字段是否为时间类型
+				if isTimeField(colInfo.DataType) {
+					// 检查字段是否需要自动填充（为空或值不合法）
+					shouldFill := false
 
-						if fieldVal, exists := data[fieldName]; !exists || fieldVal == nil {
-							// 字段不存在或为nil
-							shouldFill = true
-						} else {
-							// 检查字段值是否为合法的时间值
-							switch v := fieldVal.(type) {
-							case string:
-								if v == "" {
-									shouldFill = true
-								} else {
-									// 尝试解析时间字符串
-									_, err := parseTimeWithMultipleFormats(v)
-									if err != nil {
-										// 时间格式不合法，标记为需要填充
-										shouldFill = true
-									}
-								}
-							case time.Time:
-								// 已经是time.Time类型，检查是否为零值
-								if v.IsZero() {
+					if fieldVal, exists := data[fieldName]; !exists || fieldVal == nil {
+						// 字段不存在或为nil
+						shouldFill = true
+					} else {
+						// 检查字段值是否为合法的时间值
+						switch v := fieldVal.(type) {
+						case string:
+							if v == "" {
+								shouldFill = true
+							} else {
+								// 尝试解析时间字符串
+								_, err := parseTimeWithMultipleFormats(v)
+								if err != nil {
+									// 时间格式不合法，标记为需要填充
 									shouldFill = true
 								}
-							default:
-								// 非时间类型值，标记为需要填充
+							}
+						case time.Time:
+							// 已经是time.Time类型，检查是否为零值
+							if v.IsZero() {
 								shouldFill = true
 							}
+						default:
+							// 非时间类型值，标记为需要填充
+							shouldFill = true
 						}
+					}
 
-						// 如果需要填充，设置为当前时间
-						if shouldFill {
+					// 如果需要填充，设置为当前时间
+					if shouldFill {
+						data[fieldName] = now
+					}
+				}
+			}
+		}
+
+		// 执行插入操作 - 直接使用原始 SQL 和预处理语句
+		columns := make([]string, 0, len(data))
+		values := make([]any, 0, len(data))
+		placeholders := make([]string, 0, len(data))
+
+		i := 1
+		for k, v := range data {
+			columns = append(columns, k)
+			values = append(values, v)
+			placeholders = append(placeholders, fmt.Sprintf("$%d", i))
+			i++
+		}
+
+		// 为 PostgreSQL 使用 RETURNING 语法
+		query := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES (%s) RETURNING *",
+			c.Table,
+			strings.Join(columns, ", "),
+			strings.Join(placeholders, ", "))
+
+		result := chain.Raw(query, values...).Exec()
+		if result.Error != nil {
+			return nil, result.Error
+		}
+
+		if len(result.Data) == 0 {
+			// 如果没有返回数据
+			return map[string]interface{}{
+				"success": true,
+			}, nil
+		}
+
+		return c.transferData(result.Data[0], true)
+	}
+}
+
+func (c *Crud) updateOperation() DataOperationFunc {
+	return func(input any) (any, error) {
+		data, ok := input.(map[string]any)
+		if !ok {
+			return nil, errors.New("invalid data format")
+		}
+
+		chain := c.Db.Chain().Table(c.Table)
+
+		// 获取表结构信息，包括主键信息
+		tableInfo, err := c.Db.GetTableInfo(c.Table)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get table info: %w", err)
+		}
+
+		// 检查表是否有主键
+		if len(tableInfo.PrimaryKeys) == 0 {
+			return nil, errors.New("table has no primary key")
+		}
+
+		// 获取第一个主键字段
+		primaryKey := tableInfo.PrimaryKeys[0]
+
+		// 检查是否提供了有效的主键
+		var primaryKeyValue any
+		if pkVal, hasPK := data[primaryKey]; hasPK {
+			// 如果提供了主键但值无效，直接返回错误
+			if !isPrimaryKeyValid(pkVal) {
+				return nil, fmt.Errorf("提供的主键值无效: %v", pkVal)
+			}
+			primaryKeyValue = pkVal
+			delete(data, primaryKey)
+		} else {
+			// 未提供主键，无法执行更新操作
+			return nil, errors.New("更新操作必须提供有效的主键")
+		}
+
+		// 获取表结构信息，用于自动填充时间字段
+		columnInfo, err := c.queryBuilder.CacheTableInfo()
+		if err == nil {
+			now := time.Now()
+
+			// 更新操作时，只自动填充更新时间相关字段
+			updateTimeFieldNames := []string{"update_at", "updated_at", "update_time", "modification_time", "modified_at"}
+			for _, fieldName := range updateTimeFieldNames {
+				if col, exists := columnInfo[fieldName]; exists {
+					if isTimeField(col.DataType) {
+						if _, hasField := data[fieldName]; !hasField || data[fieldName] == nil {
 							data[fieldName] = now
 						}
 					}
 				}
-			} else {
-				// 更新操作时，只自动填充更新时间相关字段
-				updateTimeFieldNames := []string{"update_at", "updated_at", "update_time", "modification_time", "modified_at"}
-				for _, fieldName := range updateTimeFieldNames {
-					if col, exists := columnInfo[fieldName]; exists {
-						if isTimeField(col.DataType) {
-							if _, hasField := data[fieldName]; !hasField || data[fieldName] == nil {
-								data[fieldName] = now
-							}
-						}
-					}
-				}
 			}
 		}
 
-		// 执行保存操作
-		if isUpdate {
-			// 更新操作
-			chain.Where(primaryKey, define.OpEq, primaryKeyValue)
-			result := chain.Values(data).Update()
-			if result.Error != nil {
-				return nil, result.Error
-			}
-			// 重新查询获取更新后的数据
-			queryResult := chain.First()
-			if queryResult.Error != nil {
-				return nil, queryResult.Error
-			}
-			if len(queryResult.Data) == 0 {
-				return nil, errors.New("failed to retrieve updated data")
-			}
-			return c.transferData(queryResult.Data[0], true)
-		} else {
-			// 插入操作 - 直接使用原始 SQL 和预处理语句
-			columns := make([]string, 0, len(data))
-			values := make([]any, 0, len(data))
-			placeholders := make([]string, 0, len(data))
-
-			i := 1
-			for k, v := range data {
-				columns = append(columns, k)
-				values = append(values, v)
-				placeholders = append(placeholders, fmt.Sprintf("$%d", i))
-				i++
-			}
-
-			// 为 PostgreSQL 使用 RETURNING 语法
-			query := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES (%s) RETURNING *",
-				c.Table,
-				strings.Join(columns, ", "),
-				strings.Join(placeholders, ", "))
-
-			result := chain.Raw(query, values...).Exec()
-			if result.Error != nil {
-				return nil, result.Error
-			}
-
-			if len(result.Data) == 0 {
-				// 如果没有返回数据
-				return map[string]interface{}{
-					"success": true,
-				}, nil
-			}
-
-			return c.transferData(result.Data[0], true)
+		// 执行更新操作
+		chain.Where(primaryKey, define.OpEq, primaryKeyValue)
+		result := chain.Values(data).Update()
+		if result.Error != nil {
+			return nil, result.Error
 		}
+
+		// 重新查询获取更新后的数据
+		queryResult := chain.First()
+		if queryResult.Error != nil {
+			return nil, queryResult.Error
+		}
+		if len(queryResult.Data) == 0 {
+			return nil, errors.New("未找到更新后的数据")
+		}
+
+		return c.transferData(queryResult.Data[0], true)
 	}
 }
 
