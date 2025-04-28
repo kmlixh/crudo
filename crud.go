@@ -3,6 +3,7 @@ package crudo
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -535,9 +536,13 @@ func isPrimaryKeyValid(value any) bool {
 	switch v := value.(type) {
 	case string:
 		return v != "" && v != "0"
-	case int, int64, int32, int16, int8, uint, uint64, uint32, uint16, uint8, float32, float64:
-		// 所有数值类型统一处理 - 转换为float64后判断是否为0
+	case int, int64, int32, int16, int8, uint, uint64, uint32, uint16, uint8:
+		// 整数类型统一处理
 		return v != 0
+	case float32:
+		return math.Abs(float64(v)) > 1e-10
+	case float64:
+		return math.Abs(v) > 1e-10
 	default:
 		// 对于其他类型，转为字符串比较
 		str := fmt.Sprintf("%v", v)
