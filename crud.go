@@ -389,7 +389,7 @@ func (c *Crud) saveOperation() DataOperationFunc {
 		// 检查是否是更新操作
 		var isUpdate bool
 		var id any
-		if idVal, hasID := data["id"]; hasID {
+		if idVal, hasID := data["id"]; hasID && idVal != nil && idVal != "" && idVal != 0 {
 			isUpdate = true
 			id = idVal
 			delete(data, "id")
@@ -400,28 +400,58 @@ func (c *Crud) saveOperation() DataOperationFunc {
 		if err == nil {
 			now := time.Now()
 
-			// 自动填充时间字段逻辑
-			// 新建记录时填充创建时间字段
+			// 当主键为空时（新增记录时）处理所有时间字段
 			if !isUpdate {
-				timeFieldNames := []string{"create_at", "created_at", "creation_time", "create_time"}
-				for _, fieldName := range timeFieldNames {
+				// 遍历所有字段
+				for fieldName, colInfo := range columnInfo {
+					// 检查字段是否为时间类型
+					if isTimeField(colInfo.DataType) {
+						// 检查字段是否需要自动填充（为空或值不合法）
+						shouldFill := false
+
+						if fieldVal, exists := data[fieldName]; !exists || fieldVal == nil {
+							// 字段不存在或为nil
+							shouldFill = true
+						} else {
+							// 检查字段值是否为合法的时间值
+							switch v := fieldVal.(type) {
+							case string:
+								if v == "" {
+									shouldFill = true
+								} else {
+									// 尝试解析时间字符串
+									_, err := parseTimeWithMultipleFormats(v)
+									if err != nil {
+										// 时间格式不合法，标记为需要填充
+										shouldFill = true
+									}
+								}
+							case time.Time:
+								// 已经是time.Time类型，检查是否为零值
+								if v.IsZero() {
+									shouldFill = true
+								}
+							default:
+								// 非时间类型值，标记为需要填充
+								shouldFill = true
+							}
+						}
+
+						// 如果需要填充，设置为当前时间
+						if shouldFill {
+							data[fieldName] = now
+						}
+					}
+				}
+			} else {
+				// 更新操作时，只自动填充更新时间相关字段
+				updateTimeFieldNames := []string{"update_at", "updated_at", "update_time", "modification_time", "modified_at"}
+				for _, fieldName := range updateTimeFieldNames {
 					if col, exists := columnInfo[fieldName]; exists {
 						if isTimeField(col.DataType) {
 							if _, hasField := data[fieldName]; !hasField || data[fieldName] == nil {
 								data[fieldName] = now
 							}
-						}
-					}
-				}
-			}
-
-			// 无论是新建还是更新记录，都填充更新时间字段
-			updateTimeFieldNames := []string{"update_at", "updated_at", "update_time", "modification_time", "modified_at"}
-			for _, fieldName := range updateTimeFieldNames {
-				if col, exists := columnInfo[fieldName]; exists {
-					if isTimeField(col.DataType) {
-						if _, hasField := data[fieldName]; !hasField || data[fieldName] == nil {
-							data[fieldName] = now
 						}
 					}
 				}
@@ -480,6 +510,48 @@ func (c *Crud) saveOperation() DataOperationFunc {
 			return c.transferData(result.Data[0], true)
 		}
 	}
+}
+
+// 尝试使用多种格式解析时间字符串
+func parseTimeWithMultipleFormats(v string) (time.Time, error) {
+	timeFormats := []string{
+		time.RFC3339,          // 2006-01-02T15:04:05Z07:00
+		"2006-01-02T15:04:05", // ISO8601
+		"2006-01-02 15:04:05", // 常见日期时间格式
+		"2006-01-02 15:04",    // 日期时间不含秒
+		"2006-01-02",          // 仅日期
+		"01/02/2006 15:04:05", // 美式日期时间
+		"01/02/2006",          // 美式日期
+		"02/01/2006 15:04:05", // 欧式日期时间
+		"02/01/2006",          // 欧式日期
+		"20060102150405",      // 紧凑格式
+		"20060102",            // 紧凑日期
+		time.ANSIC,
+		time.UnixDate,
+		time.RubyDate,
+		time.RFC822,
+		time.RFC822Z,
+		time.RFC850,
+		time.RFC1123,
+		time.RFC1123Z,
+		time.RFC3339Nano,
+		time.Kitchen,
+		time.Stamp,
+		time.StampMilli,
+		time.StampMicro,
+		time.StampNano,
+	}
+
+	var lastErr error
+	for _, format := range timeFormats {
+		parsed, err := time.Parse(format, v)
+		if err == nil {
+			return parsed, nil
+		}
+		lastErr = err
+	}
+
+	return time.Time{}, fmt.Errorf("无法解析为时间格式: %s (错误: %v)", v, lastErr)
 }
 
 // 修改 deleteOperation 方法
