@@ -386,13 +386,27 @@ func (c *Crud) saveOperation() DataOperationFunc {
 
 		chain := c.Db.Chain().Table(c.Table)
 
+		// 获取表结构信息，包括主键信息
+		tableInfo, err := c.Db.GetTableInfo(c.Table)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get table info: %w", err)
+		}
+
+		// 检查表是否有主键
+		if len(tableInfo.PrimaryKeys) == 0 {
+			return nil, errors.New("table has no primary key")
+		}
+
+		// 获取第一个主键字段
+		primaryKey := tableInfo.PrimaryKeys[0]
+
 		// 检查是否是更新操作
 		var isUpdate bool
-		var id any
-		if idVal, hasID := data["id"]; hasID && idVal != nil && idVal != "" && idVal != 0 {
+		var primaryKeyValue any
+		if pkVal, hasPK := data[primaryKey]; hasPK && isPrimaryKeyValid(pkVal) {
 			isUpdate = true
-			id = idVal
-			delete(data, "id")
+			primaryKeyValue = pkVal
+			delete(data, primaryKey)
 		}
 
 		// 获取表结构信息，用于自动填充时间字段
@@ -461,7 +475,7 @@ func (c *Crud) saveOperation() DataOperationFunc {
 		// 执行保存操作
 		if isUpdate {
 			// 更新操作
-			chain.Where("id", define.OpEq, id)
+			chain.Where(primaryKey, define.OpEq, primaryKeyValue)
 			result := chain.Values(data).Update()
 			if result.Error != nil {
 				return nil, result.Error
@@ -509,6 +523,25 @@ func (c *Crud) saveOperation() DataOperationFunc {
 
 			return c.transferData(result.Data[0], true)
 		}
+	}
+}
+
+// 判断主键值是否有效（不为nil、空字符串、0等）
+func isPrimaryKeyValid(value any) bool {
+	if value == nil {
+		return false
+	}
+
+	switch v := value.(type) {
+	case string:
+		return v != "" && v != "0"
+	case int, int64, int32, int16, int8, uint, uint64, uint32, uint16, uint8, float32, float64:
+		// 所有数值类型统一处理 - 转换为float64后判断是否为0
+		return v != 0
+	default:
+		// 对于其他类型，转为字符串比较
+		str := fmt.Sprintf("%v", v)
+		return str != "" && str != "0"
 	}
 }
 
