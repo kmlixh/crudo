@@ -413,16 +413,20 @@ func (c *Crud) saveOperation() DataOperationFunc {
 		// 检查是否是更新操作
 		var isUpdate bool
 		var primaryKeyValue any
-		if pkVal, hasPK := data[primaryKey]; hasPK && isPrimaryKeyValid(pkVal) {
-			isUpdate = true
-			primaryKeyValue = pkVal
-			delete(data, primaryKey)
-		} else {
-			// 如果不是更新操作，且主键是自增的，则删除主键字段
-			// 这样可以确保数据库自动生成主键值
-			if isAutoIncrement && hasPK {
-				delete(data, primaryKey)
+		if pkVal, hasPK := data[primaryKey]; hasPK {
+			// 如果提供了主键，但主键值无效，直接返回错误
+			// 主键值有效，标记为更新操作
+			if isPrimaryKeyValid(pkVal) {
+				isUpdate = true
+				primaryKeyValue = pkVal
 			}
+			delete(data, primaryKey)
+		} else if isAutoIncrement {
+			// 没有提供主键，但主键是自增的，这是正常的新增操作
+			isUpdate = false
+		} else {
+			// 没有提供主键，且主键不是自增的，必须要有主键
+			return nil, errors.New("主键不是自增的，必须提供有效的主键值")
 		}
 
 		// 获取表结构信息，用于自动填充时间字段
